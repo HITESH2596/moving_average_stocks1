@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(layout="wide", page_title="NSE Total Market Backtester")
 st.title("🇮🇳 Total Indian Market Index Backtester Pro")
-st.markdown("Select an entire market index block to run macro metrics, then use the workspace below to zoom into localized timeframes with a ₹1 Lakh specific trade simulation.")
+st.markdown("Select an entire market index block to run macro metrics, then use the workspace below to zoom into localized timeframes with a cumulative compounding ₹1 Lakh strategy.")
 
 # Initialize session memory cache arrays
 if "summary_df" not in st.session_state:
@@ -70,7 +70,7 @@ def run_mass_backtest(tickers, start, end, capital):
     
     progress_bar = st.progress(0)
     total_count = len(tickers)
-    extended_start = pd.to_datetime(start) - timedelta(days=365) # Pad for SMA calculations
+    extended_start = pd.to_datetime(start) - timedelta(days=365) 
     
     for idx, ticker in enumerate(tickers):
         clean_name = ticker.replace(".NS", "")
@@ -90,7 +90,8 @@ def run_mass_backtest(tickers, start, end, capital):
             
             df['Signal'] = 0
             buy_rule = (df['SMA_20'] > df['SMA_50']) & (df['SMA_50'] > df['SMA_200'])
-            sell_rule = (df['SMA_20'] < df['SMA_50']) | (df['Close'] < df['SMA_200'])
+            # FIXED STRATEGY EXIT RULE: Using Close < SMA_50 to fix the early shakeout problem
+            sell_rule = (df['Close'] < df['SMA_50']) | (df['Close'] < df['SMA_200'])
             
             df['Signal'] = np.where(buy_rule, 1, np.where(sell_rule, -1, 0))
             df['Signal'] = df['Signal'].replace(0, np.nan).ffill().fillna(-1)
@@ -124,7 +125,7 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
     st.dataframe(st.session_state.summary_df, use_container_width=True, hide_index=True)
     
     st.markdown("---")
-    st.subheader("🔍 Localized Timeframe Workspace (₹1,00,000 Single Trade Simulation)")
+    st.subheader("🔍 Localized Timeframe Workspace (₹1,00,000 Total Cumulative Simulation)")
     
     col1, col2 = st.columns([2, 3])
     with col1:
@@ -142,7 +143,6 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
         raw_df = st.session_state.asset_charts[selected_chart]
         max_available_date = raw_df.index.max()
         
-        # Determine the user's focus timeline window
         if chart_timeframe == "1 Month":
             graph_start = max_available_date - timedelta(days=30)
         elif chart_timeframe == "3 Months":
@@ -154,10 +154,9 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
         else:
             graph_start = pd.to_datetime(start_date)
             
-        # Slice dataset to chosen timeframe for local processing
         pdf = raw_df[(raw_df.index >= graph_start) & (raw_df.index <= max_available_date)].copy()
         
-        # --- DYNAMIC METRICS RE-CALCULATION FOR SELECTED TIMEFRAME ---
+        # --- CUMULATIVE MULTI-TRADE TIMEFRAME CALCULATOR ---
         local_trades_log = []
         total_trades = 0
         winning_trades = 0
@@ -165,39 +164,36 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
         entry_price = 0.0
         entry_date = None
         
-        # Simulate investment logic starting with ₹1,00,000 capital 
-        simulation_capital = 100000.0
-        current_investment_value = simulation_capital
-        investment_status_message = "No entry signal occurred in this window."
-        has_invested = False
-
-        # If already in a BUY signal on day one of this window, trigger an immediate investment entry
+        running_portfolio_capital = 100000.0  # Starts with exactly ₹1 Lakh
+        
+        # Check if the stock starts the timeframe already inside an active buy signal
         if not pdf.empty and pdf['Signal'].iloc[0] == 1:
             position_active = True
             entry_price = float(pdf['Close'].iloc[0])
             entry_date = pdf.index[0].strftime('%Y-%m-%d')
             total_trades += 1
-            has_invested = True
 
         for index, row in pdf.iterrows():
             current_sig = row['Signal']
             current_close = float(row['Close'])
             
-            # Scenario A: New BUY crossover occurs
+            # Action: Trigger Buy Setup
             if current_sig == 1 and not position_active:
                 position_active = True
                 entry_price = current_close
                 entry_date = index.strftime('%Y-%m-%d')
                 total_trades += 1
-                if not has_invested:
-                    has_invested = True # Captures first entry data points for our ₹1L card calculation
             
-            # Scenario B: SELL trigger hits, close transaction log row
+            # Action: Trigger Sell Setup (Realized profit/loss recalculates the running portfolio total)
             elif current_sig == -1 and position_active:
                 position_active = False
                 exit_price = current_close
                 exit_date = index.strftime('%Y-%m-%d')
-                trade_return_pct = ((exit_price - entry_price) / entry_price) * 100
+                
+                trade_return_pct = ((exit_price - entry_price) / entry_price)
+                trade_profit_loss = running_portfolio_capital * trade_return_pct
+                # Update the running wallet total with the compounded results of this trade
+                running_portfolio_capital = running_portfolio_capital + trade_profit_loss
                 
                 if exit_price > entry_price:
                     winning_trades += 1
@@ -208,52 +204,49 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
                     "Entry Price": f"₹{round(entry_price, 2)}",
                     "Exit Date": exit_date,
                     "Exit Price": f"₹{round(exit_price, 2)}",
-                    "Return (%)": f"{round(trade_return_pct, 2)}%"
+                    "Trade Return": f"{round(trade_return_pct * 100, 2)}%",
+                    "Compounded Portfolio Value": f"₹{round(running_portfolio_capital, 2)}"
                 })
         
-        # Handle open trade still running at the end of the timeframe
+        # Handle open positions running up into the final day of the selected timeframe
         if position_active:
             exit_price = float(pdf['Close'].iloc[-1])
-            trade_return_pct = ((exit_price - entry_price) / entry_price) * 100
-            current_investment_value = simulation_capital * (1 + (trade_return_pct / 100))
-            investment_status_message = f"🟢 Currently invested. Active value: ₹{round(current_investment_value, 2)} ({round(trade_return_pct, 2)}%)"
+            trade_return_pct = ((exit_price - entry_price) / entry_price)
+            trade_profit_loss = running_portfolio_capital * trade_return_pct
+            running_portfolio_capital = running_portfolio_capital + trade_profit_loss
             
+            if exit_price > entry_price:
+                winning_trades += 1
+                
             local_trades_log.append({
                 "Action": "🟢 ACTIVE OPEN POSITION",
                 "Entry Date": entry_date,
                 "Entry Price": f"₹{round(entry_price, 2)}",
                 "Exit Date": "Present Day",
                 "Exit Price": f"₹{round(exit_price, 2)}",
-                "Return (%)": f"{round(trade_return_pct, 2)}%"
+                "Trade Return": f"{round(trade_return_pct * 100, 2)}%",
+                "Compounded Portfolio Value": f"₹{round(running_portfolio_capital, 2)}"
             })
-        elif has_invested and len(local_trades_log) > 0:
-            # If closed out, calculate return using final logged transaction values
-            last_trade = local_trades_log[-1]
-            pct_val = float(last_trade["Return (%)"].replace("%",""))
-            current_investment_value = simulation_capital * (1 + (pct_val / 100))
-            investment_status_message = f"🔴 Position closed. Final Value: ₹{round(current_investment_value, 2)} ({round(pct_val, 2)}%)"
 
         win_rate_pct = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
-        
-        # Calculate localized total growth changes inside this isolated window
-        pdf['Asset_Return'] = pdf['Close'].pct_change()
-        pdf['Strategy_Return'] = pdf['Asset_Return'] * pdf['Signal'].shift(1)
-        cum_strategy = (1 + pdf['Strategy_Return'].fillna(0)).cumprod()
-        strat_pct = (cum_strategy.iloc[-1] - 1) * 100
+        net_strategy_timeframe_pct = ((running_portfolio_capital - 100000.0) / 100000.0) * 100
 
-        # --- DISPLAY METRIC CARDS ---
-        st.markdown(f"#### 📈 Timeframe Specific Metrics for {selected_chart} ({chart_timeframe} Window)")
+        # --- DISPLAY THE UPDATED TIMEFRAME KPI CARDS ---
+        st.markdown(f"#### 📈 Cumulative Performance Metrics for {selected_chart} inside this {chart_timeframe} Window")
         m_col1, m_col2, m_col3, m_col4 = st.columns(4)
         with m_col1:
-            st.metric(label="Timeframe Strategy Return", value=f"{round(strat_pct, 2)}%")
+            st.metric(label="Total Strategy Return (This Window)", value=f"{round(net_strategy_timeframe_pct, 2)}%")
         with m_col2:
             st.metric(label="Timeframe Success Win Rate", value=f"{round(win_rate_pct, 1)}%")
         with m_col3:
-            st.metric(label="Timeframe Total Trades", value=str(total_trades))
+            st.metric(label="Total Executed Trades Here", value=str(total_trades))
         with m_col4:
-            st.metric(label="₹1 Lakh Capital Result", value=f"₹{round(current_investment_value, 2)}", delta=f"{round(((current_investment_value-100000)/100000)*100, 2)}% vs Starting")
+            st.metric(
+                label="Total Portfolio Value (From ₹1L Start)", 
+                value=f"₹{round(running_portfolio_capital, 2)}", 
+                delta=f"{round(net_strategy_timeframe_pct, 2)}% net change"
+            )
             
-        st.caption(f"**Investment Tracker Status Summary:** {investment_status_message}")
         st.markdown("<br>", unsafe_allow_html=True)
         
         # --- RENDER THE PLOTLY GRAPH ---
@@ -265,12 +258,12 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
         fig.update_layout(template="plotly_dark", height=450, xaxis_title="Timeline", yaxis_title="Price (INR ₹)", margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig, use_container_width=True)
         
-        # --- DISPLAY LOCAL TRADE LOG RECORD TABLE ---
-        st.markdown("#### 📝 Triggered Transactions History Log (This Timeframe)")
+        # --- DISPLAY COMPOUNDED TRANSACTIONS LEDGER ---
+        st.markdown("#### 📝 Cumulative Compounding Transaction Ledger")
         if len(local_trades_log) > 0:
             log_df = pd.DataFrame(local_trades_log)
             st.dataframe(log_df, use_container_width=True, hide_index=True)
         else:
-            st.info("No buy or sell execution points met the strategy parameters during this specific timeframe frame window.")
+            st.info("No active strategy crossover signals were triggered inside this specific isolated window.")
 else:
     st.info(f"💡 Click the blue button in the sidebar to run the strategy across all stocks listed in the {index_selection}.")
