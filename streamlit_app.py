@@ -11,7 +11,7 @@ st.markdown("Track trends, see live buy/sell conditions, and backtest performanc
 # --- 1. CLEAN HARDCODED POOL OF TOP INDIAN NSE ASSETS ---
 NIFTY_TRACKER_POOL = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "BHARTIARTL.NS", "SBIN.NSE", "ITC.NS", "HINDUNILVR.NS", "LT.NS", 
+    "BHARTIARTL.NS", "SBIN.NS", "ITC.NS", "HINDUNILVR.NS", "LT.NS", 
     "AXISBANK.NS", "KOTAKBANK.NS", "MARUTI.NS", "BAJAJFINSV.NS", "TITAN.NS"
 ]
 
@@ -30,7 +30,7 @@ end_date = st.sidebar.date_input("Backtest End Date", pd.to_datetime("2026-01-01
 # --- 3. ANALYTICS ENGINE (YAHOO FINANCE) ---
 def run_backtest(tickers, start, end, capital):
     summary_rows = []
-    charts_dict = {}
+    asset_charts = {}  # Fixed variable storage name
     
     targets = tickers if tickers else NIFTY_TRACKER_POOL
     
@@ -76,18 +76,18 @@ def run_backtest(tickers, start, end, capital):
             
             summary_rows.append({
                 "NSE Ticker": ticker.replace(".NS", ""),
-                "Last Price (₹)": round(df['Close'].iloc[-1], 2),
+                "Last Price (₹)": round(float(df['Close'].iloc[-1]), 2),
                 "Signal Condition": current_status,
-                "Strategy Return (%)": f"{round(strat_pct, 2)}%",
-                "Ending Value": f"₹{round(ending_cash, 2)}",
-                "Buy & Hold Return (%)": f"{round(bh_pct, 2)}%"
+                "Strategy Return (%)": f"{round(float(strat_pct), 2)}%",
+                "Ending Value": f"₹{round(float(ending_cash), 2)}",
+                "Buy & Hold Return (%)": f"{round(float(bh_pct), 2)}%"
             })
-            charts_dict[ticker] = df
+            asset_charts[ticker] = df
             
-        except Exception:
+        except Exception as e:
             pass # Move to next stock seamlessly if a single download glitches
             
-    return pd.DataFrame(summary_rows), charts_dict
+    return pd.DataFrame(summary_rows), asset_charts
 
 # --- 4. RENDER DATA TO DASHBOARD UI ---
 if selected_tickers or NIFTY_TRACKER_POOL:
@@ -100,7 +100,10 @@ if selected_tickers or NIFTY_TRACKER_POOL:
         
         st.markdown("---")
         st.subheader("🔍 Interactive Technical Chart Workspace")
-        selected_chart = st.selectbox("Pick an asset to inspect historical ribbon lines:", options=list(charts_dict.keys()))
+        
+        # Clean dropdown picker options matching keys
+        chart_options = list(asset_charts.keys())
+        selected_chart = st.selectbox("Pick an asset to inspect historical ribbon lines:", options=chart_options)
         
         if selected_chart in asset_charts:
             pdf = asset_charts[selected_chart]
