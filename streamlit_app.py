@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 
 st.set_page_config(layout="wide", page_title="NSE Total Market Backtester")
 st.title("🇮🇳 Total Indian Market Index Backtester Pro")
-st.markdown("Select an entire market index block to instantly backtest win rates, transaction counts, and returns over a 1 to 10-year period.")
+st.markdown("Select an entire market index block to run macro metrics, then use the workspace below to zoom into localized timeframes with a ₹1 Lakh specific trade simulation.")
 
-# Initialize memory storage (Session State)
+# Initialize session memory cache arrays
 if "summary_df" not in st.session_state:
     st.session_state.summary_df = None
 if "asset_charts" not in st.session_state:
@@ -27,7 +27,7 @@ def fetch_entire_index_pool(index_type):
     elif index_type == "Nifty 100 (Top 100 Stocks)":
         url = "https://archives.nseindia.com/content/indices/ind_nifty100list.csv"
     else:
-        return ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"]
+        return ["RELIANCE", "TCS", "HDFCBANK"]
 
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -45,17 +45,8 @@ def fetch_entire_index_pool(index_type):
 
 # --- 2. SIDEBAR PARAMETERS ---
 st.sidebar.header("⚙️ Market Range Settings")
-
-index_selection = st.sidebar.selectbox(
-    "Select Target Index Block",
-    options=["Nifty 50 (Top Bluechips)", "Nifty Next 50 (Mid-Caps)", "Nifty 100 (Top 100 Stocks)"]
-)
-
-time_option = st.sidebar.selectbox(
-    "Select Backtest Horizon",
-    options=["10 Years", "5 Years", "3 Years", "1 Year"]
-)
-
+index_selection = st.sidebar.selectbox("Select Target Index Block", options=["Nifty 50 (Top Bluechips)", "Nifty Next 50 (Mid-Caps)", "Nifty 100 (Top 100 Stocks)"])
+time_option = st.sidebar.selectbox("Select Core Backtest Horizon", options=["10 Years", "5 Years", "3 Years", "1 Year"])
 initial_capital = st.sidebar.number_input("Starting Capital per Stock (₹)", min_value=1000, value=10000, step=1000)
 
 today_dt = datetime.now()
@@ -79,8 +70,7 @@ def run_mass_backtest(tickers, start, end, capital):
     
     progress_bar = st.progress(0)
     total_count = len(tickers)
-    
-    extended_start = pd.to_datetime(start) - timedelta(days=365)
+    extended_start = pd.to_datetime(start) - timedelta(days=365) # Pad for SMA calculations
     
     for idx, ticker in enumerate(tickers):
         clean_name = ticker.replace(".NS", "")
@@ -109,44 +99,10 @@ def run_mass_backtest(tickers, start, end, capital):
             if metric_df.empty:
                 continue
                 
-            total_trades = 0
-            winning_trades = 0
-            position_active = False
-            entry_price = 0.0
-            
-            for index, row in metric_df.iterrows():
-                current_sig = row['Signal']
-                if current_sig == 1 and not position_active:
-                    position_active = True
-                    entry_price = float(row['Close'])
-                    total_trades += 1
-                elif current_sig == -1 and position_active:
-                    position_active = False
-                    exit_price = float(row['Close'])
-                    if exit_price > entry_price:
-                        winning_trades += 1
-                        
-            win_rate_pct = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
-            
-            metric_df['Asset_Return'] = metric_df['Close'].pct_change()
-            metric_df['Strategy_Return'] = metric_df['Asset_Return'] * metric_df['Signal'].shift(1)
-            
-            cum_strategy = (1 + metric_df['Strategy_Return'].fillna(0)).cumprod()
-            cum_bh = (1 + metric_df['Asset_Return'].fillna(0)).cumprod()
-            
-            strat_pct = (cum_strategy.iloc[-1] - 1) * 100
-            bh_pct = (cum_bh.iloc[-1] - 1) * 100
-            ending_cash = capital * cum_strategy.iloc[-1]
-            
             summary_rows.append({
                 "Ticker": clean_name,
                 "Last Price": round(float(metric_df['Close'].iloc[-1]), 2),
-                "Condition": "🟢 BUY" if metric_df['Signal'].iloc[-1] == 1 else "🔴 SELL",
-                "Strategy Return": f"{round(float(strat_pct), 2)}%",
-                "Buy & Hold Return": f"{round(float(bh_pct), 2)}%",
-                "Trades": int(total_trades),
-                "Success Win Rate": f"{round(win_rate_pct, 1)}%",
-                "Ending Value": f"₹{round(float(ending_cash), 2)}"
+                "Condition": "🟢 BUY" if metric_df['Signal'].iloc[-1] == 1 else "🔴 SELL"
             })
             charts_cache[clean_name] = df
             
@@ -158,57 +114,35 @@ def run_mass_backtest(tickers, start, end, capital):
 
 # --- 4. RENDER DATA ARCHITECTURE TO UI ---
 if st.sidebar.button("🚀 Run Complete Index Backtest", type="primary"):
-    with st.spinner(f"Downloading data tables for all assets in {index_selection}..."):
+    with st.spinner(f"Downloading metrics for all assets in {index_selection}..."):
         res_df, res_charts = run_mass_backtest(processed_tickers, start_date, end_date, initial_capital)
         st.session_state.summary_df = res_df
         st.session_state.asset_charts = res_charts
 
 if st.session_state.summary_df is not None and not st.session_state.summary_df.empty:
-    st.subheader(f"📊 Live Strategy Screener Matrix ({index_selection})")
+    st.subheader(f"📊 Market Overview Overview ({index_selection})")
     st.dataframe(st.session_state.summary_df, use_container_width=True, hide_index=True)
     
     st.markdown("---")
-    st.subheader("🔍 Individual Technical Chart Analytics")
+    st.subheader("🔍 Localized Timeframe Workspace (₹1,00,000 Single Trade Simulation)")
     
     col1, col2 = st.columns([2, 3])
     with col1:
         chart_options = list(st.session_state.asset_charts.keys())
-        selected_chart = st.selectbox("Select a stock to inspect:", options=chart_options)
-    
+        selected_chart = st.selectbox("Select a stock to evaluate:", options=chart_options)
     with col2:
         chart_timeframe = st.radio(
-            "Chart Timeframe View:",
+            "Select Timeframe View:",
             options=["1 Month", "3 Months", "6 Months", "1 Year", "Full Backtest Horizon"],
             index=3,
             horizontal=True
         )
         
-    # --- ADDED: NEW LIVE DYNAMIC CARD BLOCK BELOW SPECIFIC ASSET DROPDOWN ---
     if selected_chart in st.session_state.asset_charts:
-        # Pull matching data subset row from our stored dataframe match matrix
-        match_row = st.session_state.summary_df[st.session_state.summary_df["Ticker"] == selected_chart]
-        
-        if not match_row.empty:
-            st.markdown(f"#### 📈 {selected_chart} Key Metrics Summary")
-            m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
-            
-            with m_col1:
-                st.metric(label="Last Market Price", value=f"₹{match_row['Last Price'].values[0]}")
-            with m_col2:
-                st.metric(label="Strategy Return", value=match_row['Strategy Return'].values[0])
-            with m_col3:
-                st.metric(label="Success Win Rate", value=match_row['Success Win Rate'].values[0])
-            with m_col4:
-                st.metric(label="Total Trade Cycles", value=str(match_row['Trades'].values[0]))
-            with m_col5:
-                st.metric(label="Ending Portfolio Value", value=match_row['Ending Value'].values[0])
-        
-        st.markdown("<br>", unsafe_allow_html=True) # Adds a clean visual spacing divider
-        
-        # --- PLOTLY GRAPH DRAWING ---
         raw_df = st.session_state.asset_charts[selected_chart]
         max_available_date = raw_df.index.max()
         
+        # Determine the user's focus timeline window
         if chart_timeframe == "1 Month":
             graph_start = max_available_date - timedelta(days=30)
         elif chart_timeframe == "3 Months":
@@ -220,15 +154,123 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
         else:
             graph_start = pd.to_datetime(start_date)
             
-        pdf = raw_df[(raw_df.index >= graph_start) & (raw_df.index <= max_available_date)]
+        # Slice dataset to chosen timeframe for local processing
+        pdf = raw_df[(raw_df.index >= graph_start) & (raw_df.index <= max_available_date)].copy()
         
+        # --- DYNAMIC METRICS RE-CALCULATION FOR SELECTED TIMEFRAME ---
+        local_trades_log = []
+        total_trades = 0
+        winning_trades = 0
+        position_active = False
+        entry_price = 0.0
+        entry_date = None
+        
+        # Simulate investment logic starting with ₹1,00,000 capital 
+        simulation_capital = 100000.0
+        current_investment_value = simulation_capital
+        investment_status_message = "No entry signal occurred in this window."
+        has_invested = False
+
+        # If already in a BUY signal on day one of this window, trigger an immediate investment entry
+        if not pdf.empty and pdf['Signal'].iloc[0] == 1:
+            position_active = True
+            entry_price = float(pdf['Close'].iloc[0])
+            entry_date = pdf.index[0].strftime('%Y-%m-%d')
+            total_trades += 1
+            has_invested = True
+
+        for index, row in pdf.iterrows():
+            current_sig = row['Signal']
+            current_close = float(row['Close'])
+            
+            # Scenario A: New BUY crossover occurs
+            if current_sig == 1 and not position_active:
+                position_active = True
+                entry_price = current_close
+                entry_date = index.strftime('%Y-%m-%d')
+                total_trades += 1
+                if not has_invested:
+                    has_invested = True # Captures first entry data points for our ₹1L card calculation
+            
+            # Scenario B: SELL trigger hits, close transaction log row
+            elif current_sig == -1 and position_active:
+                position_active = False
+                exit_price = current_close
+                exit_date = index.strftime('%Y-%m-%d')
+                trade_return_pct = ((exit_price - entry_price) / entry_price) * 100
+                
+                if exit_price > entry_price:
+                    winning_trades += 1
+                    
+                local_trades_log.append({
+                    "Action": "🔄 COMPLETED TRADE",
+                    "Entry Date": entry_date,
+                    "Entry Price": f"₹{round(entry_price, 2)}",
+                    "Exit Date": exit_date,
+                    "Exit Price": f"₹{round(exit_price, 2)}",
+                    "Return (%)": f"{round(trade_return_pct, 2)}%"
+                })
+        
+        # Handle open trade still running at the end of the timeframe
+        if position_active:
+            exit_price = float(pdf['Close'].iloc[-1])
+            trade_return_pct = ((exit_price - entry_price) / entry_price) * 100
+            current_investment_value = simulation_capital * (1 + (trade_return_pct / 100))
+            investment_status_message = f"🟢 Currently invested. Active value: ₹{round(current_investment_value, 2)} ({round(trade_return_pct, 2)}%)"
+            
+            local_trades_log.append({
+                "Action": "🟢 ACTIVE OPEN POSITION",
+                "Entry Date": entry_date,
+                "Entry Price": f"₹{round(entry_price, 2)}",
+                "Exit Date": "Present Day",
+                "Exit Price": f"₹{round(exit_price, 2)}",
+                "Return (%)": f"{round(trade_return_pct, 2)}%"
+            })
+        elif has_invested and len(local_trades_log) > 0:
+            # If closed out, calculate return using final logged transaction values
+            last_trade = local_trades_log[-1]
+            pct_val = float(last_trade["Return (%)"].replace("%",""))
+            current_investment_value = simulation_capital * (1 + (pct_val / 100))
+            investment_status_message = f"🔴 Position closed. Final Value: ₹{round(current_investment_value, 2)} ({round(pct_val, 2)}%)"
+
+        win_rate_pct = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+        
+        # Calculate localized total growth changes inside this isolated window
+        pdf['Asset_Return'] = pdf['Close'].pct_change()
+        pdf['Strategy_Return'] = pdf['Asset_Return'] * pdf['Signal'].shift(1)
+        cum_strategy = (1 + pdf['Strategy_Return'].fillna(0)).cumprod()
+        strat_pct = (cum_strategy.iloc[-1] - 1) * 100
+
+        # --- DISPLAY METRIC CARDS ---
+        st.markdown(f"#### 📈 Timeframe Specific Metrics for {selected_chart} ({chart_timeframe} Window)")
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        with m_col1:
+            st.metric(label="Timeframe Strategy Return", value=f"{round(strat_pct, 2)}%")
+        with m_col2:
+            st.metric(label="Timeframe Success Win Rate", value=f"{round(win_rate_pct, 1)}%")
+        with m_col3:
+            st.metric(label="Timeframe Total Trades", value=str(total_trades))
+        with m_col4:
+            st.metric(label="₹1 Lakh Capital Result", value=f"₹{round(current_investment_value, 2)}", delta=f"{round(((current_investment_value-100000)/100000)*100, 2)}% vs Starting")
+            
+        st.caption(f"**Investment Tracker Status Summary:** {investment_status_message}")
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # --- RENDER THE PLOTLY GRAPH ---
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=pdf.index, y=pdf['Close'], name='Stock Close Price', line=dict(color='white', width=1.5)))
         fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_20'], name='20 Day Fast SMA', line=dict(color='cyan', width=1)))
         fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_50'], name='50 Day Medium SMA', line=dict(color='gold', width=1)))
         fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_200'], name='200 Day Macro Floor', line=dict(color='magenta', width=1.5)))
-        
-        fig.update_layout(template="plotly_dark", height=500, xaxis_title="Timeline", yaxis_title="Price (INR ₹)")
+        fig.update_layout(template="plotly_dark", height=450, xaxis_title="Timeline", yaxis_title="Price (INR ₹)", margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig, use_container_width=True)
+        
+        # --- DISPLAY LOCAL TRADE LOG RECORD TABLE ---
+        st.markdown("#### 📝 Triggered Transactions History Log (This Timeframe)")
+        if len(local_trades_log) > 0:
+            log_df = pd.DataFrame(local_trades_log)
+            st.dataframe(log_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No buy or sell execution points met the strategy parameters during this specific timeframe frame window.")
 else:
     st.info(f"💡 Click the blue button in the sidebar to run the strategy across all stocks listed in the {index_selection}.")
