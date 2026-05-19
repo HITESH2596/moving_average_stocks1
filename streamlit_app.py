@@ -10,7 +10,7 @@ st.set_page_config(layout="wide", page_title="NSE Total Market Backtester")
 st.title("🇮🇳 Total Indian Market Index Backtester Pro")
 st.markdown("Select an entire market index block to instantly backtest win rates, transaction counts, and returns over a 1 to 10-year period.")
 
-# Initialize memory storage (Session State) so changing the chart dropdown doesn't clear the data
+# Initialize memory storage (Session State)
 if "summary_df" not in st.session_state:
     st.session_state.summary_df = None
 if "asset_charts" not in st.session_state:
@@ -80,12 +80,14 @@ def run_mass_backtest(tickers, start, end, capital):
     progress_bar = st.progress(0)
     total_count = len(tickers)
     
+    extended_start = pd.to_datetime(start) - timedelta(days=365)
+    
     for idx, ticker in enumerate(tickers):
         clean_name = ticker.replace(".NS", "")
         progress_bar.progress((idx + 1) / total_count)
         
         try:
-            df = yf.download(ticker, start=start, end=end, progress=False)
+            df = yf.download(ticker, start=extended_start, end=end, progress=False)
             if df.empty or len(df) < 200:
                 continue
                 
@@ -103,12 +105,16 @@ def run_mass_backtest(tickers, start, end, capital):
             df['Signal'] = np.where(buy_rule, 1, np.where(sell_rule, -1, 0))
             df['Signal'] = df['Signal'].replace(0, np.nan).ffill().fillna(-1)
             
+            metric_df = df[df.index >= pd.to_datetime(start)].copy()
+            if metric_df.empty:
+                continue
+                
             total_trades = 0
             winning_trades = 0
             position_active = False
             entry_price = 0.0
             
-            for index, row in df.iterrows():
+            for index, row in metric_df.iterrows():
                 current_sig = row['Signal']
                 if current_sig == 1 and not position_active:
                     position_active = True
@@ -122,11 +128,11 @@ def run_mass_backtest(tickers, start, end, capital):
                         
             win_rate_pct = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
             
-            df['Asset_Return'] = df['Close'].pct_change()
-            df['Strategy_Return'] = df['Asset_Return'] * df['Signal'].shift(1)
+            metric_df['Asset_Return'] = metric_df['Close'].pct_change()
+            metric_df['Strategy_Return'] = metric_df['Asset_Return'] * metric_df['Signal'].shift(1)
             
-            cum_strategy = (1 + df['Strategy_Return'].fillna(0)).cumprod()
-            cum_bh = (1 + df['Asset_Return'].fillna(0)).cumprod()
+            cum_strategy = (1 + metric_df['Strategy_Return'].fillna(0)).cumprod()
+            cum_bh = (1 + metric_df['Asset_Return'].fillna(0)).cumprod()
             
             strat_pct = (cum_strategy.iloc[-1] - 1) * 100
             bh_pct = (cum_bh.iloc[-1] - 1) * 100
@@ -134,8 +140,8 @@ def run_mass_backtest(tickers, start, end, capital):
             
             summary_rows.append({
                 "Ticker": clean_name,
-                "Last Price": round(float(df['Close'].iloc[-1]), 2),
-                "Condition": "🟢 BUY" if df['Signal'].iloc[-1] == 1 else "🔴 SELL",
+                "Last Price": round(float(metric_df['Close'].iloc[-1]), 2),
+                "Condition": "🟢 BUY" if metric_df['Signal'].iloc[-1] == 1 else "🔴 SELL",
                 "Strategy Return": f"{round(float(strat_pct), 2)}%",
                 "Buy & Hold Return": f"{round(float(bh_pct), 2)}%",
                 "Trades": int(total_trades),
@@ -154,11 +160,9 @@ def run_mass_backtest(tickers, start, end, capital):
 if st.sidebar.button("🚀 Run Complete Index Backtest", type="primary"):
     with st.spinner(f"Downloading data tables for all assets in {index_selection}..."):
         res_df, res_charts = run_mass_backtest(processed_tickers, start_date, end_date, initial_capital)
-        # Store results in safe app memory
         st.session_state.summary_df = res_df
         st.session_state.asset_charts = res_charts
 
-# Check memory storage to see if we have data to keep displaying
 if st.session_state.summary_df is not None and not st.session_state.summary_df.empty:
     st.subheader(f"📊 Live Strategy Screener Matrix ({index_selection})")
     st.dataframe(st.session_state.summary_df, use_container_width=True, hide_index=True)
@@ -166,11 +170,58 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
     st.markdown("---")
     st.subheader("🔍 Individual Technical Chart Analytics")
     
-    chart_options = list(st.session_state.asset_charts.keys())
-    selected_chart = st.selectbox("Select a stock from the scanned index to check its ribbon graph layout:", options=chart_options)
+    col1, col2 = st.columns([2, 3])
+    with col1:
+        chart_options = list(st.session_state.asset_charts.keys())
+        selected_chart = st.selectbox("Select a stock to inspect:", options=chart_options)
     
+    with col2:
+        chart_timeframe = st.radio(
+            "Chart Timeframe View:",
+            options=["1 Month", "3 Months", "6 Months", "1 Year", "Full Backtest Horizon"],
+            index=3,
+            horizontal=True
+        )
+        
+    # --- ADDED: NEW LIVE DYNAMIC CARD BLOCK BELOW SPECIFIC ASSET DROPDOWN ---
     if selected_chart in st.session_state.asset_charts:
-        pdf = st.session_state.asset_charts[selected_chart]
+        # Pull matching data subset row from our stored dataframe match matrix
+        match_row = st.session_state.summary_df[st.session_state.summary_df["Ticker"] == selected_chart]
+        
+        if not match_row.empty:
+            st.markdown(f"#### 📈 {selected_chart} Key Metrics Summary")
+            m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+            
+            with m_col1:
+                st.metric(label="Last Market Price", value=f"₹{match_row['Last Price'].values[0]}")
+            with m_col2:
+                st.metric(label="Strategy Return", value=match_row['Strategy Return'].values[0])
+            with m_col3:
+                st.metric(label="Success Win Rate", value=match_row['Success Win Rate'].values[0])
+            with m_col4:
+                st.metric(label="Total Trade Cycles", value=str(match_row['Trades'].values[0]))
+            with m_col5:
+                st.metric(label="Ending Portfolio Value", value=match_row['Ending Value'].values[0])
+        
+        st.markdown("<br>", unsafe_allow_html=True) # Adds a clean visual spacing divider
+        
+        # --- PLOTLY GRAPH DRAWING ---
+        raw_df = st.session_state.asset_charts[selected_chart]
+        max_available_date = raw_df.index.max()
+        
+        if chart_timeframe == "1 Month":
+            graph_start = max_available_date - timedelta(days=30)
+        elif chart_timeframe == "3 Months":
+            graph_start = max_available_date - timedelta(days=90)
+        elif chart_timeframe == "6 Months":
+            graph_start = max_available_date - timedelta(days=180)
+        elif chart_timeframe == "1 Year":
+            graph_start = max_available_date - timedelta(days=365)
+        else:
+            graph_start = pd.to_datetime(start_date)
+            
+        pdf = raw_df[(raw_df.index >= graph_start) & (raw_df.index <= max_available_date)]
+        
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=pdf.index, y=pdf['Close'], name='Stock Close Price', line=dict(color='white', width=1.5)))
         fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_20'], name='20 Day Fast SMA', line=dict(color='cyan', width=1)))
