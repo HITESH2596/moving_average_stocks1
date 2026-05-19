@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(layout="wide", page_title="NSE Total Market Backtester Pro")
 st.title("🇮🇳 Total Indian Market Multi-Strategy Backtester")
-st.markdown("Select an entire index block and your preferred algorithm to backtest win rates, trade frequency, and compounded capital performance.")
+st.markdown("Analyze an entire market index block at once. The table below simulates a compounded ₹1,00,000 investment for every stock over your selected timeframe.")
 
 # Initialize session memory cache arrays
 if "summary_df" not in st.session_state:
@@ -51,7 +51,6 @@ index_selection = st.sidebar.selectbox(
     options=["Nifty 50 (Top Bluechips)", "Nifty Next 50 (Mid-Caps)", "Nifty 100 (Top 100 Stocks)"]
 )
 
-# --- ADDED: CORE STRATEGY SELECTOR DROPDOWN ---
 selected_strategy = st.sidebar.selectbox(
     "2. Choose Backtest Strategy",
     options=[
@@ -61,12 +60,19 @@ selected_strategy = st.sidebar.selectbox(
     ]
 )
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 Target & Risk Management")
+target_pct = st.sidebar.slider("Profit Target (%)", min_value=2.0, max_value=50.0, value=15.0, step=0.5)
+stop_pct = st.sidebar.slider("Stop Loss Guard (%)", min_value=1.0, max_value=25.0, value=5.0, step=0.5)
+st.sidebar.markdown(f"**Risk/Reward Ratio:** {round(target_pct / stop_pct, 2)}:1")
+st.sidebar.markdown("---")
+
 time_option = st.sidebar.selectbox(
     "3. Select Core Backtest Horizon", 
     options=["10 Years", "5 Years", "3 Years", "1 Year"]
 )
 
-initial_capital = st.sidebar.number_input("Starting Capital per Stock (₹)", min_value=1000, value=10000, step=1000)
+initial_capital = 100000.0 # Standardized to ₹1 Lakh baseline for all comparative tracking rows
 
 today_dt = datetime.now()
 if time_option == "10 Years":
@@ -82,14 +88,13 @@ end_date = today_dt.date()
 raw_nse_symbols = fetch_entire_index_pool(index_selection)
 processed_tickers = [f"{sym}.NS" for sym in raw_nse_symbols if sym]
 
-# --- 3. UNIFIED MULTI-STRATEGY QUANT CORE ENGINE ---
-def run_mass_backtest(tickers, start, end, strategy_choice):
+# --- 3. ADVANCED MASS-COMPOUNDING CALCULATION CORE ---
+def run_mass_backtest(tickers, start, end, strategy_choice, t_pct, s_pct):
     summary_rows = []
     charts_cache = {}
     
     progress_bar = st.progress(0)
     total_count = len(tickers)
-    # Give a wide 365 day extra pad for lagging metrics calculations (like the 200 SMA)
     extended_start = pd.to_datetime(start) - timedelta(days=365) 
     
     for idx, ticker in enumerate(tickers):
@@ -104,7 +109,7 @@ def run_mass_backtest(tickers, start, end, strategy_choice):
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             
-            # --- STRATEGY MATHEMATICAL INJECTION LAYER ---
+            # Mathematical Technical indicators assignment
             if strategy_choice == "LuxAlgo Style (Adaptive ATR Channel)":
                 atr_period = 14
                 atr_multiplier = 3.0
@@ -129,13 +134,12 @@ def run_mass_backtest(tickers, start, end, strategy_choice):
                 df['Visual_Band'] = np.where(df['Signal'] == 1, trend_floor, trend_ceiling)
                 
             elif strategy_choice == "MACD Momentum Breakthrough":
-                # Standard professional setup: Fast 12 day, Slow 26 day EMA lines
                 df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
                 df['EMA_26'] = df['Close'].ewm(span=26, adjust=False).mean()
                 df['MACD_Line'] = df['EMA_12'] - df['EMA_26']
                 df['Signal_Line'] = df['MACD_Line'].ewm(span=9, adjust=False).mean()
                 df['Signal'] = np.where(df['MACD_Line'] > df['Signal_Line'], 1, -1)
-                df['Visual_Band'] = df['Signal_Line'] # Assigned for visualization maps later
+                df['Visual_Band'] = df['Signal_Line']
                 
             else: # Triple SMA Ribbon
                 df['SMA_20'] = df['Close'].rolling(window=20).mean()
@@ -147,14 +151,72 @@ def run_mass_backtest(tickers, start, end, strategy_choice):
                 df['Signal'] = df['Signal'].replace(0, np.nan).ffill().fillna(-1)
                 df['Visual_Band'] = df['SMA_50']
 
-            metric_df = df[df.index >= pd.to_datetime(start)].copy()
-            if metric_df.empty:
+            # Run Isolated Timeframe Performance Loop for the Summary Table metrics
+            pdf = df[df.index >= pd.to_datetime(start)].copy()
+            if pdf.empty:
                 continue
                 
+            total_trades = 0
+            winning_trades = 0
+            position_active = False
+            entry_price = 0.0
+            live_target_price = 0.0
+            live_stop_price = 0.0
+            running_portfolio_capital = 100000.0  
+            
+            if pdf['Signal'].iloc[0] == 1:
+                position_active = True
+                entry_price = float(pdf['Close'].iloc[0])
+                total_trades += 1
+
+            for index, row in pdf.iterrows():
+                current_sig = row['Signal']
+                current_close = float(row['Close'])
+                
+                if position_active and live_target_price == 0.0:
+                    live_target_price = entry_price * (1 + (t_pct / 100))
+                    live_stop_price = entry_price * (1 - (s_pct / 100))
+
+                if current_sig == 1 and not position_active:
+                    position_active = True
+                    entry_price = current_close
+                    live_target_price = entry_price * (1 + (t_pct / 100))
+                    live_stop_price = entry_price * (1 - (s_pct / 100))
+                    total_trades += 1
+                elif position_active:
+                    hit_target = current_close >= live_target_price
+                    hit_stop = current_close <= live_stop_price
+                    indicator_exit = current_sig == -1
+                    
+                    if hit_target or hit_stop or indicator_exit:
+                        position_active = False
+                        exit_price = current_close
+                        trade_return_pct = ((exit_price - entry_price) / entry_price)
+                        running_portfolio_capital += (running_portfolio_capital * trade_return_pct)
+                        if exit_price > entry_price:
+                            winning_trades += 1
+                        live_target_price = 0.0
+                        live_stop_price = 0.0
+            
+            if position_active:
+                exit_price = float(pdf['Close'].iloc[-1])
+                trade_return_pct = ((exit_price - entry_price) / entry_price)
+                running_portfolio_capital += (running_portfolio_capital * trade_return_pct)
+                if exit_price > entry_price:
+                    winning_trades += 1
+
+            win_rate_pct = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+            net_return_pct = ((running_portfolio_capital - 100000.0) / 100000.0) * 100
+            
             summary_rows.append({
                 "Ticker": clean_name,
-                "Last Price": round(float(metric_df['Close'].iloc[-1]), 2),
-                "Condition": "🟢 BUY" if metric_df['Signal'].iloc[-1] == 1 else "🔴 SELL"
+                "Current Status": "🟢 BUY" if pdf['Signal'].iloc[-1] == 1 else "🔴 CASH",
+                "Last Price": f"₹{round(float(pdf['Close'].iloc[-1]), 2)}",
+                "Total Trades": total_trades,
+                "Win Rate (%)": f"{round(win_rate_pct, 1)}%",
+                "Strategy Profit/Loss": f"{round(net_return_pct, 2)}%",
+                "Final Balance (From ₹1L)": f"₹{round(running_portfolio_capital, 2)}",
+                "Raw_Return_Num": net_return_pct  # Kept hidden for sorting power
             })
             charts_cache[clean_name] = df
             
@@ -162,21 +224,25 @@ def run_mass_backtest(tickers, start, end, strategy_choice):
             pass
             
     progress_bar.empty()
-    return pd.DataFrame(summary_rows), charts_cache
+    out_df = pd.DataFrame(summary_rows)
+    if not out_df.empty:
+        out_df = out_df.sort_values(by="Raw_Return_Num", ascending=False).drop(columns=["Raw_Return_Num"])
+    return out_df, charts_cache
 
 # --- 4. RENDER DATA ARCHITECTURE TO UI ---
 if st.sidebar.button("🚀 Run Complete Index Backtest", type="primary"):
-    with st.spinner(f"Scanning target assets using {selected_strategy}..."):
-        res_df, res_charts = run_mass_backtest(processed_tickers, start_date, end_date, selected_strategy)
+    with st.spinner(f"Simulating capital performance for all assets inside {index_selection}..."):
+        res_df, res_charts = run_mass_backtest(processed_tickers, start_date, end_date, selected_strategy, target_pct, stop_pct)
         st.session_state.summary_df = res_df
         st.session_state.asset_charts = res_charts
 
 if st.session_state.summary_df is not None and not st.session_state.summary_df.empty:
-    st.subheader(f"📊 Market Screening Matrix via {selected_strategy}")
+    st.subheader(f"📊 Strategy Performance Leaderboard ({index_selection})")
+    st.markdown(f"Sorted automatically by highest compounding returns over the **{time_option}** horizon using **{selected_strategy}**.")
     st.dataframe(st.session_state.summary_df, use_container_width=True, hide_index=True)
     
     st.markdown("---")
-    st.subheader("🔍 Localized Timeframe Workspace (₹1,00,000 Portfolio Compounding)")
+    st.subheader("🔍 Localized Technical Workspace")
     
     col1, col2 = st.columns([2, 3])
     with col1:
@@ -207,14 +273,15 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
             
         pdf = raw_df[(raw_df.index >= graph_start) & (raw_df.index <= max_available_date)].copy()
         
-        # --- COMPOUNDING MULTI-TRADE TIMEFRAME SIMULATOR ---
+        # Local logger calculation for details workspace matching table metrics
         local_trades_log = []
         total_trades = 0
         winning_trades = 0
         position_active = False
         entry_price = 0.0
         entry_date = None
-        
+        live_target_price = 0.0
+        live_stop_price = 0.0
         running_portfolio_capital = 100000.0  
         
         if not pdf.empty and pdf['Signal'].iloc[0] == 1:
@@ -227,91 +294,85 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
             current_sig = row['Signal']
             current_close = float(row['Close'])
             
+            if position_active and live_target_price == 0.0:
+                live_target_price = entry_price * (1 + (target_pct / 100))
+                live_stop_price = entry_price * (1 - (stop_pct / 100))
+
             if current_sig == 1 and not position_active:
                 position_active = True
                 entry_price = current_close
                 entry_date = index.strftime('%Y-%m-%d')
+                live_target_price = entry_price * (1 + (target_pct / 100))
+                live_stop_price = entry_price * (1 - (stop_pct / 100))
                 total_trades += 1
-            elif current_sig == -1 and position_active:
-                position_active = False
-                exit_price = current_close
-                exit_date = index.strftime('%Y-%m-%d')
+            elif position_active:
+                hit_target = current_close >= live_target_price
+                hit_stop = current_close <= live_stop_price
+                indicator_exit = current_sig == -1
                 
-                trade_return_pct = ((exit_price - entry_price) / entry_price)
-                trade_profit_loss = running_portfolio_capital * trade_return_pct
-                running_portfolio_capital += trade_profit_loss
-                
-                if exit_price > entry_price:
-                    winning_trades += 1
-                    
-                local_trades_log.append({
-                    "Action": f"⚡ {selected_strategy[:10]} EXIT",
-                    "Entry Date": entry_date,
-                    "Entry Price": f"₹{round(entry_price, 2)}",
-                    "Exit Date": exit_date,
-                    "Exit Price": f"₹{round(exit_price, 2)}",
-                    "Trade Return": f"{round(trade_return_pct * 100, 2)}%",
-                    "Compounded Portfolio Value": f"₹{round(running_portfolio_capital, 2)}"
-                })
+                if hit_target or hit_stop or indicator_exit:
+                    position_active = False
+                    exit_price = current_close
+                    exit_date = index.strftime('%Y-%m-%d')
+                    trade_return_pct = ((exit_price - entry_price) / entry_price)
+                    running_portfolio_capital += (running_portfolio_capital * trade_return_pct)
+                    if exit_price > entry_price: winning_trades += 1
+                    label = "🎯 TARGET" if hit_target else ("🛑 STOP LOSS" if hit_stop else "🔄 INDICATOR")
+                    local_trades_log.append({
+                        "Action": label, "Entry Date": entry_date, "Entry Price": f"₹{round(entry_price, 2)}",
+                        "Exit Date": exit_date, "Exit Price": f"₹{round(exit_price, 2)}",
+                        "Trade Return": f"{round(trade_return_pct * 100, 2)}%", "Portfolio Value": f"₹{round(running_portfolio_capital, 2)}"
+                    })
+                    live_target_price, live_stop_price = 0.0, 0.0
         
         if position_active:
             exit_price = float(pdf['Close'].iloc[-1])
             trade_return_pct = ((exit_price - entry_price) / entry_price)
-            trade_profit_loss = running_portfolio_capital * trade_return_pct
-            running_portfolio_capital += trade_profit_loss
-            if exit_price > entry_price:
-                winning_trades += 1
-                
+            running_portfolio_capital += (running_portfolio_capital * trade_return_pct)
+            if exit_price > entry_price: winning_trades += 1
             local_trades_log.append({
-                "Action": "🟢 ACTIVE OPEN POSITION",
-                "Entry Date": entry_date,
-                "Entry Price": f"₹{round(entry_price, 2)}",
-                "Exit Date": "Present Day",
-                "Exit Price": f"₹{round(exit_price, 2)}",
-                "Trade Return": f"{round(trade_return_pct * 100, 2)}%",
-                "Compounded Portfolio Value": f"₹{round(running_portfolio_capital, 2)}"
+                "Action": "🟢 ACTIVE", "Entry Date": entry_date, "Entry Price": f"₹{round(entry_price, 2)}",
+                "Exit Date": "Present Day", "Exit Price": f"₹{round(exit_price, 2)}",
+                "Trade Return": f"{round(trade_return_pct * 100, 2)}%", "Portfolio Value": f"₹{round(running_portfolio_capital, 2)}"
             })
 
         win_rate_pct = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
         net_strategy_timeframe_pct = ((running_portfolio_capital - 100000.0) / 100000.0) * 100
 
-        # --- DISPLAY THE TIMEFRAME KPI CARDS ---
-        st.markdown(f"#### 📈 {selected_strategy} Metrics for {selected_chart} ({chart_timeframe})")
+        # KPI Workspace cards
+        st.markdown(f"#### 📈 Granular Breakdown: {selected_chart}")
         m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-        with m_col1:
-            st.metric(label="Strategy Window Return", value=f"{round(net_strategy_timeframe_pct, 2)}%")
-        with m_col2:
-            st.metric(label="Algorithm Success Win Rate", value=f"{round(win_rate_pct, 1)}%")
-        with m_col3:
-            st.metric(label="Total Strategy Signals Triggered", value=str(total_trades))
-        with m_col4:
-            st.metric(label="Compounded Capital Result", value=f"₹{round(running_portfolio_capital, 2)}", delta=f"{round(net_strategy_timeframe_pct, 2)}% net change")
+        with m_col1: st.metric("Selected Window Return", f"{round(net_strategy_timeframe_pct, 2)}%")
+        with m_col2: st.metric("Calculated Win Rate", f"{round(win_rate_pct, 1)}%")
+        with m_col3: st.metric("Signals Executed", str(total_trades))
+        with m_col4: st.metric("Final Capital", f"₹{round(running_portfolio_capital, 2)}")
             
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # --- RENDER THE PLOTLY GRAPH ACCORDING TO STRATEGY ---
+        if position_active and live_target_price != 0.0:
+            st.success(f"**📢 Live Target Projection:** Entry: **₹{round(entry_price,2)}** | Take Profit Level: **₹{round(live_target_price, 2)}** | Protective Stop Loss Level: **₹{round(live_stop_price, 2)}**")
+
+        # --- PLOT GRAPH ---
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=pdf.index, y=pdf['Close'], name='Stock Close Price', line=dict(color='white', width=1.5)))
-        
+        fig.add_trace(go.Scatter(x=pdf.index, y=pdf['Close'], name='Stock Price', line=dict(color='white', width=1.5)))
         if selected_strategy == "LuxAlgo Style (Adaptive ATR Channel)":
-            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['Visual_Band'], name='LuxAlgo Volatility Band', line=dict(color='lime', width=1.5, dash='dot')))
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['Visual_Band'], name='Volatility Line', line=dict(color='lime', width=1.5, dash='dot')))
         elif selected_strategy == "MACD Momentum Breakthrough":
-            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['MACD_Line'], name='MACD Line', line=dict(color='cyan', width=1)))
-            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['Signal_Line'], name='MACD Signal Trigger', line=dict(color='magenta', width=1, dash='dot')))
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['MACD_Line'], name='MACD', line=dict(color='cyan', width=1)))
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['Signal_Line'], name='Trigger Line', line=dict(color='magenta', width=1, dash='dot')))
         else:
-            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_20'], name='20 Day SMA', line=dict(color='cyan', width=1)))
-            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_50'], name='50 Day SMA', line=dict(color='gold', width=1.2)))
-            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_200'], name='200 Day Floor', line=dict(color='magenta', width=1.5)))
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_20'], name='20 SMA', line=dict(color='cyan', width=1)))
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_50'], name='50 SMA', line=dict(color='gold', width=1.2)))
+            fig.add_trace(go.Scatter(x=pdf.index, y=pdf['SMA_200'], name='200 Floor', line=dict(color='magenta', width=1.5)))
             
-        fig.update_layout(template="plotly_dark", height=450, xaxis_title="Timeline", yaxis_title="Price/Indicator Scale", margin=dict(l=20, r=20, t=20, b=20))
+        if position_active and live_target_price != 0.0:
+            fig.add_hline(y=live_target_price, line_dash="dash", line_color="green")
+            fig.add_hline(y=live_stop_price, line_dash="dash", line_color="red")
+        fig.update_layout(template="plotly_dark", height=400, margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig, use_container_width=True)
         
-        # --- DISPLAY COMPOUNDED TRANSACTIONS LEDGER ---
-        st.markdown("#### 📝 Cumulative Compounding Transaction Ledger")
+        st.markdown("#### 📝 Transaction Ledger")
         if len(local_trades_log) > 0:
-            log_df = pd.DataFrame(local_trades_log)
-            st.dataframe(log_df, use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(local_trades_log), use_container_width=True, hide_index=True)
         else:
-            st.info("No active strategy crossover signals were triggered inside this specific isolated window.")
+            st.info("No active crossover signals triggered inside this specific window selection.")
 else:
-    st.info("💡 Select your target index and strategy in the sidebar, then click 'Run Complete Index Backtest'.")
+    st.info("💡 Select your parameters in the sidebar, then click 'Run Complete Index Backtest' to build the Leaderboard.")
