@@ -1,5 +1,4 @@
-import streamlit as st
-import yfinance as yf
+yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as ob
@@ -121,6 +120,3 @@ if selected_tickers:
             margin=dict(l=20, r=20, t=40, b=20)
         )
         
-        st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning("Please choose at least one asset in the sidebar configuration panel to view platform metrics.")
