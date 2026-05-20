@@ -354,3 +354,4 @@ if st.session_state.summary_df is not None and not st.session_state.summary_df.e
             st.info("No active strategy crossover signals triggered inside this specific window selection.")
 else:
     st.info("💡 Select your parameters in the sidebar, then click 'Run Complete Index Backtest' to build the Global Leaderboard.")
+    
