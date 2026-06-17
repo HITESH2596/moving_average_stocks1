@@ -1,4 +1,3 @@
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -8,37 +7,47 @@ from datetime import datetime, timedelta
 
 st.set_page_config(layout="wide", page_title="Global Multi-Market Backtester Pro")
 st.title("Global Multi-Market Backtester Pro")
-st.markdown("Search & add any stock · 6 Strategies · 1Y / 5Y / 10Y Backtest")
+st.markdown("Search any stock · All markets in one backtest · BUY / SELL leaderboard · Watchlist")
+
+# ---------------------------------------------------------------
+# DEFAULT TICKERS (full lists)
+# ---------------------------------------------------------------
+DEFAULT_US = [
+    "AAPL","MSFT","NVDA","GOOGL","META","AMZN","TSLA","AMD","NFLX","V",
+    "JPM","MS","BAC","GS","WMT","DIS","PYPL","INTC","CRM","UBER",
+    "COIN","PLTR","HOOD","SQ","SHOP","SNOW","RBLX","NET","DDOG","ZM"
+]
+DEFAULT_IN = [
+    "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
+    "AXISBANK.NS","WIPRO.NS","BAJFINANCE.NS","SBIN.NS","LT.NS",
+    "HINDUNILVR.NS","MARUTI.NS","TATAMOTORS.NS","SUNPHARMA.NS","TITAN.NS",
+    "ASIANPAINT.NS","HCLTECH.NS","KOTAKBANK.NS","ULTRACEMCO.NS","ADANIENT.NS",
+    "ZOMATO.NS","PAYTM.NS","NYKAA.NS","POLICYBZR.NS","IRFC.NS"
+]
+DEFAULT_CR = [
+    "BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD",
+    "ADA-USD","DOGE-USD","LINK-USD","MATIC-USD","AVAX-USD"
+]
 
 # ---------------------------------------------------------------
 # SESSION STATE
 # ---------------------------------------------------------------
-for key in ["results", "charts", "us_watchlist", "in_watchlist", "cr_watchlist"]:
-    if key not in st.session_state:
-        if key == "results":
-            st.session_state[key] = {}
-        elif key == "charts":
-            st.session_state[key] = {}
-        elif key == "us_watchlist":
-            st.session_state[key] = ["AAPL", "NVDA", "MSFT", "TSLA", "AMD"]
-        elif key == "in_watchlist":
-            st.session_state[key] = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS"]
-        elif key == "cr_watchlist":
-            st.session_state[key] = ["BTC-USD", "ETH-USD", "SOL-USD"]
+def init_state():
+    defaults = {
+        "backtest_tickers": DEFAULT_US + DEFAULT_IN + DEFAULT_CR,
+        "watchlist":        [],
+        "results":          {},
+        "run_label":        "",
+        "run_currency":     "USD",
+        "wl_us":            list(DEFAULT_US),
+        "wl_in":            list(DEFAULT_IN),
+        "wl_cr":            list(DEFAULT_CR),
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-# ---------------------------------------------------------------
-# STOCK SEARCH HELPER
-# ---------------------------------------------------------------
-def validate_ticker(ticker_str):
-    try:
-        info = yf.Ticker(ticker_str).fast_info
-        price = info.last_price
-        if price and price > 0:
-            name = yf.Ticker(ticker_str).info.get("shortName", ticker_str)
-            return True, name, round(price, 2)
-        return False, None, None
-    except:
-        return False, None, None
+init_state()
 
 # ---------------------------------------------------------------
 # STRATEGIES
@@ -52,93 +61,10 @@ STRATEGIES = [
     "Bollinger Band Squeeze",
 ]
 
-PERIODS = {
-    "1Y":  365,
-    "5Y":  1825,
-    "10Y": 3650,
-}
+PERIODS = {"1Y": 365, "5Y": 1825, "10Y": 3650}
 
 # ---------------------------------------------------------------
-# SIDEBAR — WATCHLIST BUILDER
-# ---------------------------------------------------------------
-st.sidebar.header("Stock Watchlist Builder")
-
-market_tab = st.sidebar.radio(
-    "Manage Watchlist For:",
-    ["US Stocks", "Indian Stocks (NSE)", "Crypto"],
-    horizontal=True
-)
-
-if market_tab == "US Stocks":
-    wl_key   = "us_watchlist"
-    currency = "USD"
-    suffix   = ""
-    example  = "AAPL, GOOGL, AMZN"
-elif market_tab == "Indian Stocks (NSE)":
-    wl_key   = "in_watchlist"
-    currency = "INR"
-    suffix   = ".NS"
-    example  = "RELIANCE, TCS, WIPRO"
-else:
-    wl_key   = "cr_watchlist"
-    currency = "USD"
-    suffix   = "-USD"
-    example  = "BTC, ETH, SOL"
-
-st.sidebar.markdown(f"**Search & Add Stock** — `{example}`")
-search_input = st.sidebar.text_input(
-    "Enter ticker or name",
-    placeholder=example,
-    key=f"search_{wl_key}"
-)
-
-if st.sidebar.button("Search & Add", key=f"add_{wl_key}"):
-    if search_input.strip():
-        raw = search_input.strip().upper().replace(" ", "")
-        # Auto-add suffix
-        if suffix and not raw.endswith(suffix):
-            ticker_try = raw + suffix
-        else:
-            ticker_try = raw
-
-        with st.spinner(f"Verifying {ticker_try}..."):
-            valid, name, price = validate_ticker(ticker_try)
-
-        if valid:
-            if ticker_try not in st.session_state[wl_key]:
-                st.session_state[wl_key].append(ticker_try)
-                st.sidebar.success(f"Added: {name} ({ticker_try}) @ {price}")
-            else:
-                st.sidebar.info(f"{ticker_try} already in watchlist.")
-        else:
-            # Try without suffix as fallback
-            valid2, name2, price2 = validate_ticker(raw)
-            if valid2:
-                if raw not in st.session_state[wl_key]:
-                    st.session_state[wl_key].append(raw)
-                    st.sidebar.success(f"Added: {name2} ({raw}) @ {price2}")
-                else:
-                    st.sidebar.info(f"{raw} already in watchlist.")
-            else:
-                st.sidebar.error(f"Could not find '{ticker_try}'. Check ticker and try again.")
-
-# Show current watchlist with remove buttons
-st.sidebar.markdown("**Current Watchlist:**")
-wl = st.session_state[wl_key]
-if wl:
-    for i, t in enumerate(wl):
-        c1, c2 = st.sidebar.columns([3, 1])
-        c1.markdown(f"`{t.replace('.NS','').replace('-USD','')}`")
-        if c2.button("X", key=f"rm_{wl_key}_{i}"):
-            st.session_state[wl_key].pop(i)
-            st.rerun()
-else:
-    st.sidebar.info("Watchlist is empty. Search and add stocks above.")
-
-st.sidebar.markdown("---")
-
-# ---------------------------------------------------------------
-# SIDEBAR — STRATEGY & PERIOD
+# SIDEBAR
 # ---------------------------------------------------------------
 st.sidebar.header("Backtest Settings")
 
@@ -146,8 +72,8 @@ strategy_name = st.sidebar.selectbox("Strategy", STRATEGIES)
 
 st.sidebar.markdown("**Periods**")
 use_1y  = st.sidebar.checkbox("1 Year",   value=True)
-use_5y  = st.sidebar.checkbox("5 Years",  value=True)
-use_10y = st.sidebar.checkbox("10 Years", value=True)
+use_5y  = st.sidebar.checkbox("5 Years",  value=False)
+use_10y = st.sidebar.checkbox("10 Years", value=False)
 
 selected_periods = {}
 if use_1y:  selected_periods["1Y"]  = 365
@@ -157,62 +83,126 @@ if use_10y: selected_periods["10Y"] = 3650
 capital = st.sidebar.number_input("Capital per Asset", min_value=1000, value=100000, step=5000)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**Run Backtest For:**")
-run_us = st.sidebar.button("Run US Stocks",     type="primary")
-run_in = st.sidebar.button("Run Indian Stocks", type="primary")
-run_cr = st.sidebar.button("Run Crypto",        type="primary")
+st.sidebar.markdown("**Run Backtest**")
+run_us   = st.sidebar.button("Run US Stocks",     type="primary", use_container_width=True)
+run_in   = st.sidebar.button("Run Indian Stocks", type="primary", use_container_width=True)
+run_cr   = st.sidebar.button("Run Crypto",        type="primary", use_container_width=True)
+run_all  = st.sidebar.button("Run ALL Markets",   use_container_width=True)
 
-# Which set to run
+st.sidebar.markdown("---")
+
+# ---------------------------------------------------------------
+# SIDEBAR — ADD TO WATCHLIST
+# ---------------------------------------------------------------
+st.sidebar.markdown("### Add Stock to Watchlist")
+wl_market = st.sidebar.selectbox("Market", ["US", "India (NSE)", "Crypto"], key="wl_market_sel")
+wl_search  = st.sidebar.text_input(
+    "Ticker",
+    placeholder="AAPL / RELIANCE / BTC",
+    key="wl_search_input"
+)
+if st.sidebar.button("Search & Add to Watchlist"):
+    raw = wl_search.strip().upper().replace(" ", "")
+    if raw:
+        if wl_market == "India (NSE)" and not raw.endswith(".NS"):
+            ticker_try = raw + ".NS"
+        elif wl_market == "Crypto" and not raw.endswith("-USD"):
+            ticker_try = raw + "-USD"
+        else:
+            ticker_try = raw
+        with st.spinner(f"Validating {ticker_try}..."):
+            try:
+                info  = yf.Ticker(ticker_try)
+                price = info.fast_info.last_price
+                name  = info.info.get("shortName", ticker_try)
+                if price and float(price) > 0:
+                    if ticker_try not in st.session_state.watchlist:
+                        st.session_state.watchlist.append(ticker_try)
+                    # Also add to backtest pool
+                    if wl_market == "US" and ticker_try not in st.session_state.wl_us:
+                        st.session_state.wl_us.append(ticker_try)
+                    elif wl_market == "India (NSE)" and ticker_try not in st.session_state.wl_in:
+                        st.session_state.wl_in.append(ticker_try)
+                    elif wl_market == "Crypto" and ticker_try not in st.session_state.wl_cr:
+                        st.session_state.wl_cr.append(ticker_try)
+                    st.sidebar.success(f"Added: {name} ({ticker_try})")
+                else:
+                    st.sidebar.error(f"'{ticker_try}' not found.")
+            except Exception:
+                st.sidebar.error(f"Could not find '{ticker_try}'.")
+
+# Show watchlist
+if st.session_state.watchlist:
+    st.sidebar.markdown("**Your Watchlist:**")
+    for i, t in enumerate(st.session_state.watchlist):
+        c1, c2 = st.sidebar.columns([4, 1])
+        c1.markdown(f"`{t}`")
+        if c2.button("✕", key=f"wl_rm_{i}"):
+            st.session_state.watchlist.pop(i)
+            st.rerun()
+    if st.sidebar.button("Run Watchlist Backtest", type="primary", use_container_width=True):
+        run_custom = True
+    else:
+        run_custom = False
+else:
+    run_custom = False
+
+# ---------------------------------------------------------------
+# DETERMINE WHAT TO RUN
+# ---------------------------------------------------------------
 run_tickers  = None
-run_currency = None
-run_label    = None
+run_currency = "USD"
+run_label    = ""
+
 if run_us:
-    run_tickers  = st.session_state["us_watchlist"]
+    run_tickers  = st.session_state.wl_us
     run_currency = "USD"
     run_label    = "US Stocks"
 elif run_in:
-    run_tickers  = st.session_state["in_watchlist"]
+    run_tickers  = st.session_state.wl_in
     run_currency = "INR"
     run_label    = "Indian Stocks"
 elif run_cr:
-    run_tickers  = st.session_state["cr_watchlist"]
+    run_tickers  = st.session_state.wl_cr
     run_currency = "USD"
     run_label    = "Crypto"
+elif run_all:
+    run_tickers  = st.session_state.wl_us + st.session_state.wl_in + st.session_state.wl_cr
+    run_currency = "USD"
+    run_label    = "All Markets"
+elif run_custom:
+    run_tickers  = st.session_state.watchlist
+    run_currency = "USD"
+    run_label    = "My Watchlist"
 
 # ---------------------------------------------------------------
 # INDICATOR FUNCTIONS
 # ---------------------------------------------------------------
-def compute_sma(s, w):
-    return s.rolling(w).mean()
+def compute_sma(s, w):     return s.rolling(w).mean()
+def compute_ema(s, span):  return s.ewm(span=span, adjust=False).mean()
 
-def compute_ema(s, span):
-    return s.ewm(span=span, adjust=False).mean()
-
-def compute_atr(df, period=14):
+def compute_atr(df, p=14):
     hl  = df["High"] - df["Low"]
     hcp = (df["High"] - df["Close"].shift(1)).abs()
     lcp = (df["Low"]  - df["Close"].shift(1)).abs()
-    tr  = pd.concat([hl, hcp, lcp], axis=1).max(axis=1)
-    return tr.rolling(period).mean()
+    return pd.concat([hl, hcp, lcp], axis=1).max(axis=1).rolling(p).mean()
 
-def compute_rsi(s, period=14):
-    delta = s.diff()
-    gain  = delta.clip(lower=0).rolling(period).mean()
-    loss  = (-delta.clip(upper=0)).rolling(period).mean()
-    rs    = gain / loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
+def compute_rsi(s, p=14):
+    d = s.diff()
+    g = d.clip(lower=0).rolling(p).mean()
+    l = (-d.clip(upper=0)).rolling(p).mean()
+    return 100 - (100 / (1 + g / l.replace(0, np.nan)))
 
 def compute_bb(s, w=20, n=2):
-    mid   = s.rolling(w).mean()
-    std   = s.rolling(w).std()
-    return mid + n * std, mid, mid - n * std
+    mid = s.rolling(w).mean()
+    std = s.rolling(w).std()
+    return mid + n*std, mid, mid - n*std
 
 # ---------------------------------------------------------------
 # SIGNAL GENERATION
 # ---------------------------------------------------------------
 def generate_signals(df, strategy):
     df = df.copy()
-
     if strategy == "Triple SMA Ribbon (20/50/200)":
         df["SMA20"]  = compute_sma(df["Close"], 20)
         df["SMA50"]  = compute_sma(df["Close"], 50)
@@ -224,9 +214,9 @@ def generate_signals(df, strategy):
 
     elif strategy == "LuxAlgo ATR Channel":
         df["ATR"] = compute_atr(df, 14)
-        mid   = (df["High"] + df["Low"]) / 2
-        tf    = (mid - 3.0 * df["ATR"]).values
-        tc    = (mid + 3.0 * df["ATR"]).values
+        mid    = (df["High"] + df["Low"]) / 2
+        tf     = (mid - 3.0 * df["ATR"]).values
+        tc     = (mid + 3.0 * df["ATR"]).values
         closes = df["Close"].values
         floor, ceil_v, signals = [0.0]*len(df), [0.0]*len(df), [0]*len(df)
         for i in range(1, len(df)):
@@ -290,22 +280,24 @@ def run_backtest(df, capital):
             ret = (price - entry) / entry
             portfolio *= (1 + ret)
             if price > entry: wins += 1
-            log.append({"Status": "CLOSED", "Entry Date": entry_date, "Entry Price": round(entry, 4),
-                         "Exit Date": date, "Exit Price": round(price, 4),
-                         "Return %": round(ret * 100, 2), "Portfolio": round(portfolio, 2)})
+            log.append({"Status": "CLOSED", "Entry Date": entry_date,
+                         "Entry Price": round(entry, 4), "Exit Date": date,
+                         "Exit Price": round(price, 4), "Return %": round(ret*100, 2),
+                         "Portfolio": round(portfolio, 2)})
 
     if in_pos:
         price = float(closes[-1])
         ret   = (price - entry) / entry
         portfolio *= (1 + ret)
         if price > entry: wins += 1
-        log.append({"Status": "OPEN", "Entry Date": entry_date, "Entry Price": round(entry, 4),
-                     "Exit Date": "Present", "Exit Price": round(price, 4),
-                     "Return %": round(ret * 100, 2), "Portfolio": round(portfolio, 2)})
+        log.append({"Status": "OPEN", "Entry Date": entry_date,
+                     "Entry Price": round(entry, 4), "Exit Date": "Present",
+                     "Exit Price": round(price, 4), "Return %": round(ret*100, 2),
+                     "Portfolio": round(portfolio, 2)})
 
-    win_rate = wins / total * 100 if total > 0 else 0.0
-    first_cl = df[df["Signal"].notna()]["Close"].iloc[0] if not df[df["Signal"].notna()].empty else closes[0]
-    bh_pct   = (float(closes[-1]) / float(first_cl) - 1) * 100
+    win_rate  = wins / total * 100 if total > 0 else 0.0
+    first_cl  = df[df["Signal"].notna()]["Close"].iloc[0] if not df[df["Signal"].notna()].empty else closes[0]
+    bh_pct    = (float(closes[-1]) / float(first_cl) - 1) * 100
 
     return {"net_pct": round((portfolio/capital-1)*100, 2), "bh_pct": round(bh_pct, 2),
             "end_val": round(portfolio, 2), "win_rate": round(win_rate, 1),
@@ -315,14 +307,16 @@ def run_backtest(df, capital):
 # ---------------------------------------------------------------
 # MAIN ENGINE
 # ---------------------------------------------------------------
-def run_engine(tickers, strategy, periods, capital, currency):
-    results = {p: [] for p in periods}
-    charts  = {}
+def run_engine(tickers, strategy, periods, capital):
+    results  = {p: [] for p in periods}
     max_days = max(periods.values()) + 250
-    progress = st.progress(0)
+    total    = len(tickers)
+    prog     = st.progress(0)
+    status   = st.empty()
 
     for idx, ticker in enumerate(tickers):
-        progress.progress((idx + 1) / len(tickers))
+        prog.progress((idx + 1) / total)
+        status.caption(f"Processing {ticker} ({idx+1}/{total})...")
         try:
             end_dt   = datetime.now()
             start_dt = end_dt - timedelta(days=max_days)
@@ -331,7 +325,6 @@ def run_engine(tickers, strategy, periods, capital, currency):
                 continue
             if isinstance(raw.columns, pd.MultiIndex):
                 raw.columns = raw.columns.get_level_values(0)
-            charts[ticker] = raw
 
             for label, days in periods.items():
                 cutoff   = end_dt - timedelta(days=days)
@@ -340,8 +333,15 @@ def run_engine(tickers, strategy, periods, capital, currency):
                     continue
                 enriched = generate_signals(slice_df, strategy)
                 bt       = run_backtest(enriched, capital)
+
+                # Tag market
+                if ticker.endswith(".NS"):   mkt = "India"
+                elif ticker.endswith("-USD"): mkt = "Crypto"
+                else:                         mkt = "US"
+
                 results[label].append({
                     "Ticker":    ticker,
+                    "Market":    mkt,
                     "Price":     bt["last_price"],
                     "Signal":    "BUY" if bt["last_sig"] == 1 else "SELL",
                     "Net %":     bt["net_pct"],
@@ -353,43 +353,42 @@ def run_engine(tickers, strategy, periods, capital, currency):
                     "_df":       enriched,
                 })
         except Exception as e:
-            st.warning(f"Skipped {ticker}: {e}")
+            status.caption(f"Skipped {ticker}: {e}")
+            continue
 
-    progress.empty()
+    prog.empty()
+    status.empty()
     for label in results:
         results[label].sort(key=lambda x: x["Net %"], reverse=True)
-    return results, charts
+    return results
 
 # ---------------------------------------------------------------
-# RUN ENGINE
+# RUN
 # ---------------------------------------------------------------
 if run_tickers is not None:
     if not run_tickers:
-        st.warning(f"Your {run_label} watchlist is empty. Add stocks first.")
+        st.warning("No stocks to backtest. Add stocks first.")
     elif not selected_periods:
         st.warning("Select at least one period.")
     else:
-        currency = run_currency
         with st.spinner(f"Running backtest for {run_label}..."):
-            res, chts = run_engine(run_tickers, strategy_name, selected_periods, capital, run_currency)
-            st.session_state.results  = res
-            st.session_state.charts   = chts
-            st.session_state.currency = run_currency
-            st.session_state.run_label = run_label
+            res = run_engine(run_tickers, strategy_name, selected_periods, capital)
+            st.session_state.results     = res
+            st.session_state.run_label   = run_label
+            st.session_state.run_currency = run_currency
 
 # ---------------------------------------------------------------
 # DISPLAY
 # ---------------------------------------------------------------
 if st.session_state.results:
-    res      = st.session_state.results
-    currency = st.session_state.get("currency", "USD")
-    run_label = st.session_state.get("run_label", "")
+    res       = st.session_state.results
+    run_label = st.session_state.run_label
 
-    st.markdown(f"### Results — {run_label} · {strategy_name}")
+    st.markdown(f"## Results — {run_label} · {strategy_name}")
 
     available_periods = [p for p in res if res[p]]
     if not available_periods:
-        st.error("No results. Check your watchlist or try a longer period.")
+        st.error("No results returned.")
         st.stop()
 
     period_tabs = st.tabs(available_periods)
@@ -398,76 +397,139 @@ if st.session_state.results:
         with tab:
             period_data = res[period_label]
 
-            buy_list  = [r["Ticker"].replace(".NS","").replace("-USD","") for r in period_data if r["Signal"] == "BUY"]
-            sell_list = [r["Ticker"].replace(".NS","").replace("-USD","") for r in period_data if r["Signal"] == "SELL"]
+            # TOP BUY / TOP SELL lists ranked by Net %
+            buy_stocks  = [r for r in period_data if r["Signal"] == "BUY"]
+            sell_stocks = [r for r in period_data if r["Signal"] == "SELL"]
 
+            # Top 10 of each
+            top_buy  = buy_stocks[:10]
+            top_sell = sell_stocks[:10]
+
+            st.markdown("### Signal Summary")
             col_b, col_s = st.columns(2)
+
             with col_b:
-                st.success("BUY: " + ("  |  ".join(buy_list) if buy_list else "None"))
+                st.success(f"TOP BUY SIGNALS ({len(buy_stocks)} total)")
+                if top_buy:
+                    buy_df = pd.DataFrame([{
+                        "Ticker":  r["Ticker"].replace(".NS","").replace("-USD",""),
+                        "Market":  r["Market"],
+                        "Price":   r["Price"],
+                        "Strat %": r["Net %"],
+                        "B&H %":   r["B&H %"],
+                    } for r in top_buy])
+                    st.dataframe(
+                        buy_df.style.map(
+                            lambda v: "color: #3fb950" if isinstance(v, (int,float)) and v >= 0
+                                      else ("color: #f85149" if isinstance(v, (int,float)) else ""),
+                            subset=["Strat %","B&H %"]
+                        ),
+                        use_container_width=True, hide_index=True
+                    )
+                else:
+                    st.info("No BUY signals.")
+
             with col_s:
-                st.error("SELL / CASH: " + ("  |  ".join(sell_list) if sell_list else "None"))
+                st.error(f"TOP SELL / CASH ({len(sell_stocks)} total)")
+                if top_sell:
+                    sell_df = pd.DataFrame([{
+                        "Ticker":  r["Ticker"].replace(".NS","").replace("-USD",""),
+                        "Market":  r["Market"],
+                        "Price":   r["Price"],
+                        "Strat %": r["Net %"],
+                        "B&H %":   r["B&H %"],
+                    } for r in top_sell])
+                    st.dataframe(
+                        sell_df.style.map(
+                            lambda v: "color: #3fb950" if isinstance(v, (int,float)) and v >= 0
+                                      else ("color: #f85149" if isinstance(v, (int,float)) else ""),
+                            subset=["Strat %","B&H %"]
+                        ),
+                        use_container_width=True, hide_index=True
+                    )
+                else:
+                    st.info("No SELL signals.")
 
             st.markdown("---")
-            st.subheader("Strategy Leaderboard")
+
+            # FULL LEADERBOARD
+            st.subheader("Full Strategy Leaderboard")
+
+            # Filter by market
+            mkt_filter = st.radio(
+                "Filter by market:",
+                ["All", "US", "India", "Crypto"],
+                horizontal=True,
+                key=f"mkt_filter_{period_label}"
+            )
+            filtered = period_data if mkt_filter == "All" else [r for r in period_data if r["Market"] == mkt_filter]
 
             display_df = pd.DataFrame([{
-                "Ticker":               r["Ticker"].replace(".NS","").replace("-USD",""),
-                "Price":                r["Price"],
-                "Signal":               r["Signal"],
-                "Strategy %":           r["Net %"],
-                "Buy & Hold %":         r["B&H %"],
-                "Win Rate %":           r["Win Rate"],
-                "Total Trades":         r["Trades"],
-                f"End Value ({currency})": r["End Value"],
-            } for r in period_data])
+                "Ticker":      r["Ticker"].replace(".NS","").replace("-USD",""),
+                "Market":      r["Market"],
+                "Price":       r["Price"],
+                "Signal":      r["Signal"],
+                "Strategy %":  r["Net %"],
+                "Buy & Hold %":r["B&H %"],
+                "Win Rate %":  r["Win Rate"],
+                "Trades":      r["Trades"],
+                "End Value":   r["End Value"],
+            } for r in filtered])
 
             def color_signal(val):
-                if val == "BUY":  return "background-color: #1a3a1a; color: #3fb950; font-weight: bold"
-                if val == "SELL": return "background-color: #3a1a1a; color: #f85149; font-weight: bold"
+                if val == "BUY":  return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
+                if val == "SELL": return "background-color:#3a1a1a;color:#f85149;font-weight:bold"
                 return ""
 
             def color_pct(val):
-                try:
-                    return "color: #3fb950" if float(val) >= 0 else "color: #f85149"
-                except:
-                    return ""
+                try:    return "color:#3fb950" if float(val) >= 0 else "color:#f85149"
+                except: return ""
 
             st.dataframe(
                 display_df.style
                     .map(color_signal, subset=["Signal"])
-                    .map(color_pct,    subset=["Strategy %", "Buy & Hold %"]),
+                    .map(color_pct,    subset=["Strategy %","Buy & Hold %"]),
                 use_container_width=True, hide_index=True
             )
 
             st.markdown("---")
-            st.subheader("Chart & Trade Log")
 
-            ticker_choices  = [r["Ticker"] for r in period_data]
+            # CHART + TRADE LOG
+            st.subheader("Chart & Trade Log")
+            ticker_choices  = [r["Ticker"] for r in filtered]
+            if not ticker_choices:
+                st.info("No tickers to display.")
+                continue
+
             selected_ticker = st.selectbox(
-                "Select asset:",
+                "Select asset to inspect:",
                 options=ticker_choices,
                 format_func=lambda x: x.replace(".NS","").replace("-USD",""),
                 key=f"sel_{period_label}"
             )
+            selected_row = next((r for r in filtered if r["Ticker"] == selected_ticker), None)
 
-            selected_row = next((r for r in period_data if r["Ticker"] == selected_ticker), None)
             if selected_row:
                 df_plot = selected_row["_df"]
                 log     = selected_row["_log"]
+                curr    = "INR" if selected_ticker.endswith(".NS") else "USD"
 
                 m1, m2, m3, m4, m5 = st.columns(5)
                 m1.metric("Signal",   selected_row["Signal"])
                 m2.metric("Strategy", f"{selected_row['Net %']}%")
                 m3.metric("B&H",      f"{selected_row['B&H %']}%")
                 m4.metric("Win Rate", f"{selected_row['Win Rate']}%")
-                m5.metric("End Val",  f"{currency} {selected_row['End Value']:,.0f}")
+                m5.metric("End Val",  f"{curr} {selected_row['End Value']:,.0f}")
 
-                tf_choice = st.radio("View:", ["1M","3M","6M","1Y","Full"], index=4, horizontal=True, key=f"tf_{period_label}_{selected_ticker}")
-                tf_map    = {"1M":30,"3M":90,"6M":180,"1Y":365}
-                df_view   = df_plot if tf_choice == "Full" else df_plot[df_plot.index >= df_plot.index.max() - timedelta(days=tf_map[tf_choice])]
+                tf_choice = st.radio("View:", ["1M","3M","6M","1Y","Full"], index=4,
+                                     horizontal=True, key=f"tf_{period_label}_{selected_ticker}")
+                tf_map  = {"1M":30,"3M":90,"6M":180,"1Y":365}
+                df_view = df_plot if tf_choice == "Full" else \
+                          df_plot[df_plot.index >= df_plot.index.max() - timedelta(days=tf_map[tf_choice])]
 
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Close"], name="Price", line=dict(color="white", width=1.5)))
+                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Close"],
+                                         name="Price", line=dict(color="white", width=1.5)))
 
                 s = strategy_name
                 if s in ["Triple SMA Ribbon (20/50/200)", "Mean Reversion - Dip Buy"]:
@@ -489,29 +551,32 @@ if st.session_state.results:
 
                 buy_dates   = [t["Entry Date"] for t in log]
                 buy_prices  = [t["Entry Price"] for t in log]
-                sell_dates  = [t["Exit Date"]  for t in log if t["Status"] == "CLOSED"]
-                sell_prices = [t["Exit Price"] for t in log if t["Status"] == "CLOSED"]
+                sell_dates  = [t["Exit Date"]   for t in log if t["Status"] == "CLOSED"]
+                sell_prices = [t["Exit Price"]  for t in log if t["Status"] == "CLOSED"]
 
                 if buy_dates:
-                    fig.add_trace(go.Scatter(x=buy_dates,  y=buy_prices,  mode="markers", name="BUY",  marker=dict(symbol="triangle-up",   color="lime", size=10)))
+                    fig.add_trace(go.Scatter(x=buy_dates,  y=buy_prices,  mode="markers",
+                                             name="BUY",  marker=dict(symbol="triangle-up",   color="lime", size=10)))
                 if sell_dates:
-                    fig.add_trace(go.Scatter(x=sell_dates, y=sell_prices, mode="markers", name="SELL", marker=dict(symbol="triangle-down", color="red",  size=10)))
+                    fig.add_trace(go.Scatter(x=sell_dates, y=sell_prices, mode="markers",
+                                             name="SELL", marker=dict(symbol="triangle-down", color="red",  size=10)))
 
-                fig.update_layout(template="plotly_dark", height=450, margin=dict(l=20,r=20,t=30,b=20),
+                fig.update_layout(template="plotly_dark", height=450,
+                                  margin=dict(l=20,r=20,t=30,b=20),
                                   legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig, use_container_width=True)
 
                 st.subheader("Trade Log")
                 if log:
                     log_df = pd.DataFrame(log)
-                    log_df.rename(columns={"Portfolio": f"Portfolio ({currency})"}, inplace=True)
+                    log_df.rename(columns={"Portfolio": f"Portfolio ({curr})"}, inplace=True)
 
                     def c_ret(v):
-                        try: return "color: #3fb950" if float(v) >= 0 else "color: #f85149"
+                        try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
                         except: return ""
                     def c_stat(v):
-                        if v == "OPEN":   return "color: #3fb950; font-weight: bold"
-                        if v == "CLOSED": return "color: #8b949e"
+                        if v == "OPEN":   return "color:#3fb950;font-weight:bold"
+                        if v == "CLOSED": return "color:#8b949e"
                         return ""
 
                     st.dataframe(
@@ -521,4 +586,4 @@ if st.session_state.results:
                 else:
                     st.info("No trades triggered.")
 else:
-    st.info("Add stocks to your watchlist and click Run in the sidebar.")
+    st.info("Click one of the Run buttons in the sidebar to start.")
