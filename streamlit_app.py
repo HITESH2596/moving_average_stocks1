@@ -500,6 +500,54 @@ if st.session_state.results:
                         st.session_state.watchlist.remove(t)
                         st.rerun()
 
+            # ---- SEARCH & ADD AFTER BACKTEST ----
+            st.markdown("---")
+            st.markdown("### Search & Add Any Stock to Results")
+            sc1, sc2, sc3 = st.columns([2, 1, 1])
+            with sc1:
+                search_ticker = st.text_input(
+                    "Ticker",
+                    placeholder="Type any ticker e.g. AAPL, RELIANCE, BTC",
+                    key=f"post_search_{period_label}",
+                    label_visibility="collapsed"
+                )
+            with sc2:
+                search_market = st.selectbox(
+                    "Market",
+                    ["US", "India (NSE)", "Crypto"],
+                    key=f"post_market_{period_label}",
+                    label_visibility="collapsed"
+                )
+            with sc3:
+                search_btn = st.button("Search & Add to Results", key=f"post_btn_{period_label}", use_container_width=True)
+
+            if search_btn and search_ticker.strip():
+                raw = search_ticker.strip().upper().replace(" ", "")
+                if search_market == "India (NSE)" and not raw.endswith(".NS"):
+                    t_try = raw + ".NS"
+                elif search_market == "Crypto" and not raw.endswith("-USD"):
+                    t_try = raw + "-USD"
+                else:
+                    t_try = raw
+
+                # Check not already in results
+                already = any(r["Ticker"] == t_try for r in res.get(period_label, []))
+                if already:
+                    st.info(f"{t_try} already in results.")
+                else:
+                    with st.spinner(f"Fetching & backtesting {t_try}..."):
+                        try:
+                            new_rows = backtest_single(t_try, strategy_name, selected_periods, capital)
+                            if new_rows and period_label in new_rows:
+                                st.session_state.results[period_label].append(new_rows[period_label])
+                                st.session_state.results[period_label].sort(key=lambda x: x["Net %"], reverse=True)
+                                st.success(f"Added {t_try} — Signal: {new_rows[period_label]['Signal']} | Strategy: {new_rows[period_label]['Net %']}%")
+                                st.rerun()
+                            else:
+                                st.error(f"Could not fetch data for '{t_try}'. Check ticker.")
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
             st.markdown("---")
 
             # ---- FULL LEADERBOARD ----
