@@ -675,3 +675,4 @@ if st.session_state.results:
 else:
     st.markdown("---")
     st.info("Add stocks in the search boxes above, then click a Run button in the sidebar.")
+    
