@@ -77,19 +77,25 @@ run_cr   = st.sidebar.button("Run Crypto",        type="primary", use_container_
 run_all  = st.sidebar.button("Run ALL Markets",   use_container_width=True)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Add Stocks to Backtest")
-st.sidebar.caption("Search any stock from US, India or Crypto and add it to the backtest pool.")
+st.sidebar.markdown("### Search & Add Any Stock")
+st.sidebar.caption("Type any ticker. Auto-adds .NS for India, -USD for Crypto.")
 
-wl_market = st.sidebar.selectbox("Market", ["US", "India (NSE)", "Crypto"], key="wl_market_sel")
-wl_search  = st.sidebar.text_input(
-    "Enter ticker",
-    placeholder="e.g. AAPL / RELIANCE / BTC",
+wl_market = st.sidebar.selectbox(
+    "Which market is this stock from?",
+    ["US", "India (NSE)", "Crypto"],
+    key="wl_market_sel"
+)
+wl_search = st.sidebar.text_input(
+    "Ticker symbol",
+    placeholder="e.g. AAPL, RELIANCE, BTC, ZOMATO, COIN...",
     key="wl_search_input"
 )
 
-if st.sidebar.button("Search & Add", use_container_width=True):
+if st.sidebar.button("Search & Add", use_container_width=True, type="primary"):
     raw = wl_search.strip().upper().replace(" ", "")
-    if raw:
+    if not raw:
+        st.sidebar.warning("Please enter a ticker.")
+    else:
         if wl_market == "India (NSE)" and not raw.endswith(".NS"):
             ticker_try = raw + ".NS"
         elif wl_market == "Crypto" and not raw.endswith("-USD"):
@@ -97,46 +103,54 @@ if st.sidebar.button("Search & Add", use_container_width=True):
         else:
             ticker_try = raw
 
-        with st.spinner(f"Validating {ticker_try}..."):
+        with st.spinner(f"Looking up {ticker_try}..."):
+            found = False
             try:
-                info  = yf.Ticker(ticker_try)
-                price = info.fast_info.last_price
-                name  = info.info.get("shortName", ticker_try)
+                tk    = yf.Ticker(ticker_try)
+                price = tk.fast_info.last_price
+                name  = tk.info.get("shortName", ticker_try)
                 if price and float(price) > 0:
-                    if wl_market == "US" and ticker_try not in st.session_state.wl_us:
-                        st.session_state.wl_us.append(ticker_try)
-                    elif wl_market == "India (NSE)" and ticker_try not in st.session_state.wl_in:
-                        st.session_state.wl_in.append(ticker_try)
-                    elif wl_market == "Crypto" and ticker_try not in st.session_state.wl_cr:
-                        st.session_state.wl_cr.append(ticker_try)
-                    if ticker_try not in st.session_state.watchlist:
-                        st.session_state.watchlist.append(ticker_try)
-                    st.sidebar.success(f"Added: {name} ({ticker_try}) @ {round(float(price),2)}")
-                else:
-                    st.sidebar.error(f"'{ticker_try}' not found. Check ticker.")
+                    found = True
             except Exception:
-                st.sidebar.error(f"Could not find '{ticker_try}'. Check ticker.")
-    else:
-        st.sidebar.warning("Please enter a ticker.")
+                found = False
+
+            if found:
+                if wl_market == "US":
+                    if ticker_try not in st.session_state.wl_us:
+                        st.session_state.wl_us.append(ticker_try)
+                elif wl_market == "India (NSE)":
+                    if ticker_try not in st.session_state.wl_in:
+                        st.session_state.wl_in.append(ticker_try)
+                elif wl_market == "Crypto":
+                    if ticker_try not in st.session_state.wl_cr:
+                        st.session_state.wl_cr.append(ticker_try)
+                if ticker_try not in st.session_state.watchlist:
+                    st.session_state.watchlist.append(ticker_try)
+                st.sidebar.success(f"Added: {name} ({ticker_try}) @ {round(float(price), 2)}")
+            else:
+                st.sidebar.error(
+                    f"Could not find '{ticker_try}'. "
+                    "Double-check the ticker symbol and selected market."
+                )
 
 st.sidebar.markdown("---")
 
-# Show all added stocks with remove option
+# Show all added stocks
 all_added = st.session_state.wl_us + st.session_state.wl_in + st.session_state.wl_cr
 if all_added:
-    st.sidebar.markdown("**Stocks added to backtest:**")
+    st.sidebar.markdown("**Stocks in backtest pool:**")
     for i, t in enumerate(all_added):
         c1, c2 = st.sidebar.columns([4, 1])
         mkt_tag = "🇮🇳" if t.endswith(".NS") else "🪙" if t.endswith("-USD") else "🇺🇸"
         c1.markdown(f"{mkt_tag} `{t.replace('.NS','').replace('-USD','')}`")
         if c2.button("✕", key=f"rm_all_{i}"):
-            if t in st.session_state.wl_us:   st.session_state.wl_us.remove(t)
-            if t in st.session_state.wl_in:   st.session_state.wl_in.remove(t)
-            if t in st.session_state.wl_cr:   st.session_state.wl_cr.remove(t)
+            if t in st.session_state.wl_us:    st.session_state.wl_us.remove(t)
+            if t in st.session_state.wl_in:    st.session_state.wl_in.remove(t)
+            if t in st.session_state.wl_cr:    st.session_state.wl_cr.remove(t)
             if t in st.session_state.watchlist: st.session_state.watchlist.remove(t)
             st.rerun()
 else:
-    st.sidebar.info("No stocks added yet. Search above to add stocks.")
+    st.sidebar.info("No stocks added yet. Search above to add.")
 
 # ---------------------------------------------------------------
 # DETERMINE WHAT TO RUN
@@ -161,10 +175,6 @@ elif run_all:
     run_tickers  = st.session_state.wl_us + st.session_state.wl_in + st.session_state.wl_cr
     run_currency = "USD"
     run_label    = "All Markets"
-elif run_custom:
-    run_tickers  = st.session_state.watchlist
-    run_currency = "USD"
-    run_label    = "My Watchlist"
 
 # ---------------------------------------------------------------
 # INDICATOR FUNCTIONS
