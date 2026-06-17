@@ -521,3 +521,4 @@ if st.session_state.results:
                     st.info("No trades triggered.")
 else:
     st.info("Add stocks to your watchlist and click Run in the sidebar.")
+    
