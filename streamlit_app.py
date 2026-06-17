@@ -1,4 +1,3 @@
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -24,20 +23,28 @@ if "charts" not in st.session_state:
 MARKETS = {
     "US Tech & Bluechips": {
         "tickers": ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "AMD", "NFLX", "V", "JPM", "MS"],
-        "currency": "USD"
+        "currency": "USD",
+        "suffix": "",
+        "hint": "e.g. AAPL, TSLA, NVDA"
     },
     "Indian Markets (NSE)": {
         "tickers": ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
                     "AXISBANK.NS", "WIPRO.NS", "BAJFINANCE.NS", "SBIN.NS", "LT.NS"],
-        "currency": "INR"
+        "currency": "INR",
+        "suffix": ".NS",
+        "hint": "e.g. RELIANCE, TCS, INFY (no .NS needed)"
     },
     "Crypto Majors": {
         "tickers": ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "ADA-USD", "DOGE-USD", "LINK-USD"],
-        "currency": "USD"
+        "currency": "USD",
+        "suffix": "-USD",
+        "hint": "e.g. BTC, ETH, SOL (no -USD needed)"
     },
     "Global Commodities": {
         "tickers": ["GC=F", "SI=F", "CL=F", "NG=F", "HG=F"],
-        "currency": "USD"
+        "currency": "USD",
+        "suffix": "",
+        "hint": "e.g. GC=F (Gold), SI=F (Silver), CL=F (Oil)"
     },
 }
 
@@ -63,7 +70,41 @@ st.sidebar.header("Strategy Parameters")
 
 market_name = st.sidebar.selectbox("Select Market", list(MARKETS.keys()))
 currency = MARKETS[market_name]["currency"]
-tickers = MARKETS[market_name]["tickers"]
+suffix   = MARKETS[market_name]["suffix"]
+hint     = MARKETS[market_name]["hint"]
+
+# ---- Custom ticker search ----
+st.sidebar.markdown("**Search / Add Custom Stocks**")
+st.sidebar.caption(hint)
+custom_input = st.sidebar.text_input(
+    "Enter tickers (comma separated)",
+    placeholder=hint,
+    key="custom_tickers"
+)
+
+def parse_custom(raw, suffix):
+    out = []
+    for t in raw.split(","):
+        t = t.strip().upper()
+        if not t:
+            continue
+        # Auto-append suffix if not already present
+        if suffix and not t.endswith(suffix):
+            t = t + suffix
+        out.append(t)
+    return out
+
+custom_tickers = parse_custom(custom_input, suffix) if custom_input.strip() else []
+
+# Merge: custom tickers go first, then defaults (deduplicated)
+default_tickers = MARKETS[market_name]["tickers"]
+if custom_tickers:
+    merged = custom_tickers + [t for t in default_tickers if t not in custom_tickers]
+    st.sidebar.success(f"Added: {', '.join(custom_tickers)}")
+else:
+    merged = default_tickers
+
+tickers = merged
 
 strategy_name = st.sidebar.selectbox("Select Strategy", STRATEGIES)
 
