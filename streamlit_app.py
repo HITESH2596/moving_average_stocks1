@@ -379,8 +379,8 @@ if st.session_state.results:
                     return ""
 
             styled = display_df.style \
-                .applymap(color_signal, subset=["Signal"]) \
-                .applymap(color_pct, subset=[f"Strategy %", "Buy & Hold %"])
+                .map(color_signal, subset=["Signal"]) \
+                .map(color_pct, subset=[f"Strategy %", "Buy & Hold %"])
 
             st.dataframe(styled, use_container_width=True, hide_index=True)
 
@@ -506,8 +506,8 @@ if st.session_state.results:
                         return ""
 
                     log_styled = log_df.style \
-                        .applymap(color_trade,  subset=["Return %"]) \
-                        .applymap(color_status, subset=["Status"])
+                        .map(color_trade,  subset=["Return %"]) \
+                        .map(color_status, subset=["Status"])
                     st.dataframe(log_styled, use_container_width=True, hide_index=True)
                 else:
                     st.info("No trades triggered in this period.")
