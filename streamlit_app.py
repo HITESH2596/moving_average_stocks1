@@ -554,29 +554,30 @@ if st.session_state.results:
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["EMA21"], name="EMA 21",
                                               line=dict(color="orange", width=1)))
                 elif s == "Smart Money Concepts (SMC)":
-                    # Demand zone (bull OB area)
-                    if "SMC_Bull" in df_view.columns:
-                        sma50_v = compute_sma(df_view["Close"], min(50, len(df_view)))
-                        fig.add_trace(go.Scatter(
-                            x=df_view.index, y=sma50_v,
-                            name="SMA 50 (HTF Trend)",
-                            line=dict(color="orange", width=1, dash="dot")
-                        ))
-                        # Highlight demand zones (bull sweep candles)
-                        bull_sweep_idx = df_view.index[
-                            (df_view["Low"] < df_view["Low"].rolling(20).min().shift(1)) &
+                    sma50_v = compute_sma(df_view["Close"], min(50, len(df_view)))
+                    fig.add_trace(go.Scatter(
+                        x=df_view.index, y=sma50_v,
+                        name="SMA 50 (HTF Trend)",
+                        line=dict(color="orange", width=1, dash="dot")
+                    ))
+                    try:
+                        prev_lo = df_view["Low"].rolling(20).min().shift(1)
+                        bull_sweep_mask = (
+                            (df_view["Low"] < prev_lo) &
                             (df_view["Close"] > df_view["Open"])
-                        ]
-                        for idx in bull_sweep_idx[-5:]:
-                            fig.add_vrect(
-                                x0=idx, x1=idx,
-                                fillcolor="rgba(0,255,100,0.15)",
-                                layer="below", line_width=2,
+                        )
+                        bull_sweep_dates = df_view.index[bull_sweep_mask].tolist()
+                        for idx in bull_sweep_dates[-5:]:
+                            fig.add_vline(
+                                x=str(idx),
                                 line_color="rgba(0,255,100,0.5)",
-                                annotation_text="Liq Sweep",
+                                line_width=1,
+                                annotation_text="Liq",
                                 annotation_font_size=9,
                                 annotation_font_color="lime"
                             )
+                    except Exception:
+                        pass
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBUp"],  name="BB Upper",
                                               line=dict(color="orange", width=1, dash="dot")))
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBLow"], name="BB Lower",
