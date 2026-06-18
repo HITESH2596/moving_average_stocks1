@@ -261,8 +261,13 @@ def process_ticker(ticker, strategy, periods, capital):
     raw = yf.download(ticker, start=start_dt, end=end_dt, progress=False, auto_adjust=True)
     if raw.empty or len(raw) < 60:
         return None
+    # Flatten MultiIndex columns completely
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = raw.columns.get_level_values(0)
+    # Ensure standard column names
+    raw.columns = [str(c).strip() for c in raw.columns]
+    # Reset to clean DatetimeIndex
+    raw.index = pd.to_datetime(raw.index)
     mkt = "India" if ticker.endswith(".NS") else "Crypto" if ticker.endswith("-USD") else "US"
     result = {}
     for label, days in periods.items():
@@ -558,8 +563,9 @@ if st.session_state.results:
                 df_view.index = pd.to_datetime(df_view.index)
 
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Close"],
-                                          name="Price", line=dict(color="white", width=1.5)))
+                try:
+                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Close"],
+                                              name="Price", line=dict(color="white", width=1.5)))
                 s = strategy_name
                 if s in ["Triple SMA Ribbon (20/50/200)", "Mean Reversion - Dip Buy"]:
                     for c_n, color, nm in [("SMA20","cyan","SMA 20"),("SMA50","gold","SMA 50"),("SMA200","magenta","SMA 200")]:
@@ -623,6 +629,9 @@ if st.session_state.results:
                 fig.update_layout(template="plotly_dark", height=450,
                                    margin=dict(l=20,r=20,t=30,b=20),
                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                except Exception as chart_err:
+                    st.warning(f"Chart could not render: {chart_err}")
+                    fig = go.Figure()
                 st.plotly_chart(fig, use_container_width=True)
 
                 st.subheader("Trade Log")
