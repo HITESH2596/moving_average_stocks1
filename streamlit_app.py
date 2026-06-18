@@ -260,80 +260,81 @@ if st.session_state.results:
         with tab:
             period_data = res[period_label]
 
-            # ── BUY / SELL PANELS ──────────────────────────────
-            buy_stocks  = [r for r in period_data if r["Signal"] == "BUY"]
-            sell_stocks = [r for r in period_data if r["Signal"] == "SELL"]
-
-            st.markdown("### Signal Summary")
-            col_b, col_s = st.columns(2)
-
             def pct_color(v):
                 try: return "color:#3fb950" if float(v) >= 0 else "color:#f85149"
                 except: return ""
 
-            with col_b:
-                st.success(f"BUY Signals — {len(buy_stocks)} stocks")
-                if buy_stocks:
-                    buy_df = pd.DataFrame([{
-                        "Ticker": r["Ticker"].replace(".NS","").replace("-USD",""),
-                        "Market": r["Market"], "Price": r["Price"],
-                        "Strat %": r["Net %"], "B&H %": r["B&H %"],
-                    } for r in buy_stocks])
-                    st.dataframe(buy_df.style.map(pct_color, subset=["Strat %","B&H %"]),
-                                 use_container_width=True, hide_index=True)
-                    # Watchlist add buttons
-                    st.caption("Add to Watchlist:")
-                    wl_btn_cols = st.columns(min(len(buy_stocks), 5))
-                    for j, r in enumerate(buy_stocks):
-                        lbl = r["Ticker"].replace(".NS","").replace("-USD","")
-                        if wl_btn_cols[j % 5].button(f"+ {lbl}", key=f"wl_b_{period_label}_{j}"):
-                            if r["Ticker"] not in st.session_state.watchlist:
-                                st.session_state.watchlist.append(r["Ticker"])
-                                st.toast(f"Added {lbl} to watchlist!")
-                else:
-                    st.info("No BUY signals.")
+            buy_stocks  = [r for r in period_data if r["Signal"] == "BUY"]
+            sell_stocks = [r for r in period_data if r["Signal"] == "SELL"]
 
-            with col_s:
-                st.error(f"SELL / CASH — {len(sell_stocks)} stocks")
-                if sell_stocks:
-                    sell_df = pd.DataFrame([{
-                        "Ticker": r["Ticker"].replace(".NS","").replace("-USD",""),
-                        "Market": r["Market"], "Price": r["Price"],
-                        "Strat %": r["Net %"], "B&H %": r["B&H %"],
-                    } for r in sell_stocks])
-                    st.dataframe(sell_df.style.map(pct_color, subset=["Strat %","B&H %"]),
-                                 use_container_width=True, hide_index=True)
-                else:
-                    st.info("No SELL signals.")
+            # ── BUY LIST WITH INLINE WATCHLIST BUTTON ─────────
+            st.markdown("### BUY Signals")
+            st.success(f"{len(buy_stocks)} stocks currently on BUY")
+            if buy_stocks:
+                for r in buy_stocks:
+                    lbl     = r["Ticker"].replace(".NS","").replace("-USD","")
+                    in_wl   = r["Ticker"] in st.session_state.watchlist
+                    c1,c2,c3,c4,c5,c6 = st.columns([2,1,1.2,1.2,1.2,1.5])
+                    c1.markdown(f"**{lbl}** `{r['Market']}`")
+                    c2.markdown(f"**{r['Price']}**")
+                    c3.markdown(f"<span style='color:#3fb950'>Strat: {r['Net %']}%</span>", unsafe_allow_html=True)
+                    c4.markdown(f"B&H: {r['B&H %']}%")
+                    c5.markdown(f"WR: {r['Win Rate']}%")
+                    if in_wl:
+                        if c6.button(f"★ In Watchlist", key=f"wl_buy_{period_label}_{lbl}"):
+                            st.session_state.watchlist.remove(r["Ticker"])
+                            st.rerun()
+                    else:
+                        if c6.button(f"☆ Add Watchlist", key=f"wl_buy_{period_label}_{lbl}"):
+                            st.session_state.watchlist.append(r["Ticker"])
+                            st.rerun()
+            else:
+                st.info("No BUY signals.")
 
-            # ── WATCHLIST ──────────────────────────────────────
+            st.markdown("---")
+
+            # ── SELL LIST WITH INLINE WATCHLIST BUTTON ────────
+            st.markdown("### SELL / CASH Signals")
+            st.error(f"{len(sell_stocks)} stocks currently on SELL")
+            if sell_stocks:
+                for r in sell_stocks:
+                    lbl     = r["Ticker"].replace(".NS","").replace("-USD","")
+                    in_wl   = r["Ticker"] in st.session_state.watchlist
+                    c1,c2,c3,c4,c5,c6 = st.columns([2,1,1.2,1.2,1.2,1.5])
+                    c1.markdown(f"**{lbl}** `{r['Market']}`")
+                    c2.markdown(f"**{r['Price']}**")
+                    c3.markdown(f"<span style='color:#f85149'>Strat: {r['Net %']}%</span>", unsafe_allow_html=True)
+                    c4.markdown(f"B&H: {r['B&H %']}%")
+                    c5.markdown(f"WR: {r['Win Rate']}%")
+                    if in_wl:
+                        if c6.button(f"★ In Watchlist", key=f"wl_sell_{period_label}_{lbl}"):
+                            st.session_state.watchlist.remove(r["Ticker"])
+                            st.rerun()
+                    else:
+                        if c6.button(f"☆ Add Watchlist", key=f"wl_sell_{period_label}_{lbl}"):
+                            st.session_state.watchlist.append(r["Ticker"])
+                            st.rerun()
+            else:
+                st.info("No SELL signals.")
+
+            # ── WATCHLIST SUMMARY ─────────────────────────────
             if st.session_state.watchlist:
                 st.markdown("---")
-                st.markdown("### My Watchlist")
-                wl_rows = []
-                for t in st.session_state.watchlist:
-                    match = next((r for r in period_data if r["Ticker"] == t), None)
-                    if match:
-                        wl_rows.append({
-                            "Ticker":  t.replace(".NS","").replace("-USD",""),
-                            "Market":  match["Market"], "Price":  match["Price"],
-                            "Signal":  match["Signal"], "Strat %":match["Net %"], "B&H %":match["B&H %"],
-                        })
-                if wl_rows:
-                    def sig_color(v):
-                        if v == "BUY":  return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
-                        if v == "SELL": return "background-color:#3a1a1a;color:#f85149;font-weight:bold"
-                        return ""
-                    st.dataframe(
-                        pd.DataFrame(wl_rows).style.map(sig_color, subset=["Signal"]).map(pct_color, subset=["Strat %","B&H %"]),
-                        use_container_width=True, hide_index=True
-                    )
-                rm_cols = st.columns(min(len(st.session_state.watchlist), 5))
-                for j, t in enumerate(st.session_state.watchlist):
-                    lbl = t.replace(".NS","").replace("-USD","")
-                    if rm_cols[j % 5].button(f"- {lbl}", key=f"wl_rm_{period_label}_{j}"):
-                        st.session_state.watchlist.remove(t)
-                        st.rerun()
+                st.markdown("### ★ My Watchlist")
+                wl_in_results = [r for r in period_data if r["Ticker"] in st.session_state.watchlist]
+                if wl_in_results:
+                    for r in wl_in_results:
+                        lbl  = r["Ticker"].replace(".NS","").replace("-USD","")
+                        sig_color = "#3fb950" if r["Signal"] == "BUY" else "#f85149"
+                        c1,c2,c3,c4,c5,c6 = st.columns([2,1,1.2,1.2,1.2,1.5])
+                        c1.markdown(f"**{lbl}** `{r['Market']}`")
+                        c2.markdown(f"**{r['Price']}**")
+                        c3.markdown(f"<span style='color:{sig_color}'>{r['Signal']}</span>", unsafe_allow_html=True)
+                        c4.markdown(f"Strat: {r['Net %']}%")
+                        c5.markdown(f"B&H: {r['B&H %']}%")
+                        if c6.button(f"✕ Remove", key=f"wl_rm2_{period_label}_{lbl}"):
+                            st.session_state.watchlist.remove(r["Ticker"])
+                            st.rerun()
 
             st.markdown("---")
 
