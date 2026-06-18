@@ -329,48 +329,7 @@ if st.session_state.results:
 
             st.markdown("---")
 
-            # ── SEARCH ANY STOCK AFTER BACKTEST ───────────────
-            st.markdown("### Search Any Stock")
-            st.caption("Search any stock — it will be backtested instantly and added to the BUY/SELL list above.")
-            sa, sb, sc = st.columns([3, 1, 1])
-            with sa:
-                search_input = st.text_input("Ticker", placeholder="e.g. AAPL, RELIANCE, BTC, ZOMATO, PLTR...",
-                                              label_visibility="collapsed", key=f"srch_{period_label}")
-            with sb:
-                search_mkt = st.selectbox("Market", ["US", "India (NSE)", "Crypto"],
-                                           label_visibility="collapsed", key=f"srch_mkt_{period_label}")
-            with sc:
-                search_go = st.button("Search & Add", key=f"srch_btn_{period_label}", use_container_width=True, type="primary")
 
-            if search_go and search_input.strip():
-                raw_t = search_input.strip().upper().replace(" ", "")
-                if search_mkt == "India (NSE)" and not raw_t.endswith(".NS"):
-                    t_try = raw_t + ".NS"
-                elif search_mkt == "Crypto" and not raw_t.endswith("-USD"):
-                    t_try = raw_t + "-USD"
-                else:
-                    t_try = raw_t
-
-                already = any(r["Ticker"] == t_try for r in period_data)
-                if already:
-                    st.info(f"{t_try} is already in results. Select it in the chart below.")
-                else:
-                    with st.spinner(f"Fetching & backtesting {t_try}..."):
-                        try:
-                            new_rows = process_ticker(t_try, strategy_name, selected_periods, capital)
-                            if new_rows and period_label in new_rows:
-                                st.session_state.results[period_label].append(new_rows[period_label])
-                                st.session_state.results[period_label].sort(key=lambda x: x["Net %"], reverse=True)
-                                sig = new_rows[period_label]["Signal"]
-                                ret = new_rows[period_label]["Net %"]
-                                st.success(f"{t_try} added! Signal: **{sig}** | Strategy Return: **{ret}%**")
-                                st.rerun()
-                            else:
-                                st.error(f"No data found for '{t_try}'. Check the ticker symbol.")
-                        except Exception as e:
-                            st.error(f"Error fetching {t_try}: {e}")
-
-            st.markdown("---")
 
             # ── FULL LEADERBOARD ───────────────────────────────
             st.subheader("Full Leaderboard")
@@ -401,9 +360,9 @@ if st.session_state.results:
             # ── CHART & TRADE LOG ──────────────────────────────
             st.markdown("---")
             st.subheader("Chart & Trade Log")
+            st.caption("Search any stock — get chart, performance & add to watchlist in one place.")
 
-            # Single search — no dropdown
-            ch1, ch2, ch3 = st.columns([3, 1, 1])
+            ch1, ch2 = st.columns([3, 1])
             with ch1:
                 chart_search = st.text_input(
                     "Stock",
@@ -417,13 +376,37 @@ if st.session_state.results:
                     label_visibility="collapsed",
                     key=f"chart_mkt_{period_label}"
                 )
-            with ch3:
-                chart_go = st.button("Search", key=f"chart_go_{period_label}",
-                                      use_container_width=True, type="primary")
 
-            # Resolve ticker
+            # Live suggestions as user types
+            if chart_search.strip() and len(chart_search.strip()) >= 2:
+                try:
+                    raw_q = chart_search.strip()
+                    search_results = yf.Search(raw_q, max_results=6).quotes
+                    if search_results:
+                        suggestions = [
+                            f"{q.get('symbol','')} — {q.get('shortname', q.get('longname',''))}"
+                            for q in search_results if q.get("symbol")
+                        ]
+                        chosen = st.selectbox(
+                            "Suggestions (select or ignore):",
+                            [""] + suggestions,
+                            key=f"suggest_{period_label}"
+                        )
+                        if chosen:
+                            # Extract just the ticker symbol
+                            suggested_ticker = chosen.split(" — ")[0].strip()
+                            st.session_state[f"chart_search_pick_{period_label}"] = suggested_ticker
+                except Exception:
+                    pass
+
+            chart_go = st.button("Search & View Chart", key=f"chart_go_{period_label}",
+                                  use_container_width=True, type="primary")
+
+            # Resolve ticker — use suggestion pick if available
             if chart_go and chart_search.strip():
-                raw_t = chart_search.strip().upper().replace(" ", "")
+                picked = st.session_state.get(f"chart_search_pick_{period_label}")
+                raw_t  = (picked if picked else chart_search.strip()).upper().replace(" ", "")
+                st.session_state[f"chart_search_pick_{period_label}"] = None
                 if chart_mkt == "India (NSE)" and not raw_t.endswith(".NS"):
                     t_try = raw_t + ".NS"
                 elif chart_mkt == "Crypto" and not raw_t.endswith("-USD"):
