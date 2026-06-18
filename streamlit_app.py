@@ -33,7 +33,6 @@ STRATEGIES = [
     "EMA 9/21 Ribbon",
     "Bollinger Band Squeeze",
 ]
-PERIODS = {"1Y": 365, "5Y": 1825, "10Y": 3650}
 
 # ---------------------------------------------------------------
 # SIDEBAR
@@ -45,6 +44,7 @@ st.sidebar.markdown("**Periods**")
 use_1y  = st.sidebar.checkbox("1 Year",   value=True)
 use_5y  = st.sidebar.checkbox("5 Years",  value=False)
 use_10y = st.sidebar.checkbox("10 Years", value=False)
+
 selected_periods = {}
 if use_1y:  selected_periods["1Y"]  = 365
 if use_5y:  selected_periods["5Y"]  = 1825
@@ -109,7 +109,9 @@ def generate_signals(df, strategy):
             elif closes[i] < floor[i]:  signals[i] = -1
             else:                        signals[i] =  signals[i-1]
         df["Signal"] = signals
-        df["Band"]   = np.where(df["Signal"] == 1, pd.Series(floor, index=df.index), pd.Series(ceil_v, index=df.index))
+        df["Band"]   = np.where(df["Signal"] == 1,
+                                pd.Series(floor,  index=df.index),
+                                pd.Series(ceil_v, index=df.index))
     elif strategy == "MACD Momentum":
         df["EMA12"]   = compute_ema(df["Close"], 12)
         df["EMA26"]   = compute_ema(df["Close"], 26)
@@ -156,14 +158,16 @@ def run_backtest(df, capital):
             portfolio *= (1 + ret)
             if price > entry: wins += 1
             log.append({"Status":"CLOSED","Entry Date":entry_date,"Entry Price":round(entry,4),
-                         "Exit Date":date,"Exit Price":round(price,4),"Return %":round(ret*100,2),"Portfolio":round(portfolio,2)})
+                         "Exit Date":date,"Exit Price":round(price,4),
+                         "Return %":round(ret*100,2),"Portfolio":round(portfolio,2)})
     if in_pos:
         price = float(closes[-1])
         ret   = (price - entry) / entry
         portfolio *= (1 + ret)
         if price > entry: wins += 1
         log.append({"Status":"OPEN","Entry Date":entry_date,"Entry Price":round(entry,4),
-                     "Exit Date":"Present","Exit Price":round(price,4),"Return %":round(ret*100,2),"Portfolio":round(portfolio,2)})
+                     "Exit Date":"Present","Exit Price":round(price,4),
+                     "Return %":round(ret*100,2),"Portfolio":round(portfolio,2)})
     win_rate = wins / total * 100 if total > 0 else 0.0
     first_cl = df[df["Signal"].notna()]["Close"].iloc[0] if not df[df["Signal"].notna()].empty else closes[0]
     bh_pct   = (float(closes[-1]) / float(first_cl) - 1) * 100
@@ -188,7 +192,8 @@ def process_ticker(ticker, strategy, periods, capital):
     for label, days in periods.items():
         cutoff   = end_dt - timedelta(days=days)
         slice_df = raw[raw.index >= pd.to_datetime(cutoff)].copy()
-        if len(slice_df) < 50: continue
+        if len(slice_df) < 50:
+            continue
         enriched = generate_signals(slice_df, strategy)
         bt       = run_backtest(enriched, capital)
         result[label] = {
@@ -216,7 +221,8 @@ def run_engine(tickers, strategy, periods, capital):
                     results[label].append(row)
         except Exception as e:
             status.caption(f"Skipped {ticker}: {e}")
-    prog.empty(); status.empty()
+    prog.empty()
+    status.empty()
     for label in results:
         results[label].sort(key=lambda x: x["Net %"], reverse=True)
     return results
@@ -225,24 +231,24 @@ def run_engine(tickers, strategy, periods, capital):
 # TRIGGER RUN
 # ---------------------------------------------------------------
 if run_us and selected_periods:
-    with st.spinner("Running US Stocks backtest..."):
+    with st.spinner("Running US Stocks..."):
         st.session_state.results   = run_engine(DEFAULT_US, strategy_name, selected_periods, capital)
         st.session_state.run_label = "US Stocks"
 elif run_in and selected_periods:
-    with st.spinner("Running Indian Stocks backtest..."):
+    with st.spinner("Running Indian Stocks..."):
         st.session_state.results   = run_engine(DEFAULT_IN, strategy_name, selected_periods, capital)
         st.session_state.run_label = "Indian Stocks"
 elif run_cr and selected_periods:
-    with st.spinner("Running Crypto backtest..."):
+    with st.spinner("Running Crypto..."):
         st.session_state.results   = run_engine(DEFAULT_CR, strategy_name, selected_periods, capital)
         st.session_state.run_label = "Crypto"
 elif run_all and selected_periods:
-    with st.spinner("Running ALL Markets backtest..."):
+    with st.spinner("Running ALL Markets..."):
         st.session_state.results   = run_engine(DEFAULT_US+DEFAULT_IN+DEFAULT_CR, strategy_name, selected_periods, capital)
         st.session_state.run_label = "All Markets"
 
 # ---------------------------------------------------------------
-# DISPLAY RESULTS
+# DISPLAY
 # ---------------------------------------------------------------
 if st.session_state.results:
     res       = st.session_state.results
@@ -272,7 +278,7 @@ if st.session_state.results:
             buy_stocks  = [r for r in period_data if r["Signal"] == "BUY"]
             sell_stocks = [r for r in period_data if r["Signal"] == "SELL"]
 
-            # ── BUY / SELL as clean tables side by side ────────
+            # BUY / SELL tables
             st.markdown("### Signal Summary")
             col_b, col_s = st.columns(2)
 
@@ -280,12 +286,12 @@ if st.session_state.results:
                 st.success(f"BUY Signals — {len(buy_stocks)} stocks")
                 if buy_stocks:
                     buy_df = pd.DataFrame([{
-                        "Ticker":  r["Ticker"].replace(".NS","").replace("-USD",""),
-                        "Market":  r["Market"],
-                        "Price":   r["Price"],
-                        "Strat %": r["Net %"],
-                        "B&H %":   r["B&H %"],
-                        "Win Rate":r["Win Rate"],
+                        "Ticker":   r["Ticker"].replace(".NS","").replace("-USD",""),
+                        "Market":   r["Market"],
+                        "Price":    r["Price"],
+                        "Strat %":  r["Net %"],
+                        "B&H %":    r["B&H %"],
+                        "Win Rate": r["Win Rate"],
                     } for r in buy_stocks])
                     st.dataframe(buy_df.style.map(pct_color, subset=["Strat %","B&H %"]),
                                  use_container_width=True, hide_index=True)
@@ -296,22 +302,22 @@ if st.session_state.results:
                 st.error(f"SELL / CASH — {len(sell_stocks)} stocks")
                 if sell_stocks:
                     sell_df = pd.DataFrame([{
-                        "Ticker":  r["Ticker"].replace(".NS","").replace("-USD",""),
-                        "Market":  r["Market"],
-                        "Price":   r["Price"],
-                        "Strat %": r["Net %"],
-                        "B&H %":   r["B&H %"],
-                        "Win Rate":r["Win Rate"],
+                        "Ticker":   r["Ticker"].replace(".NS","").replace("-USD",""),
+                        "Market":   r["Market"],
+                        "Price":    r["Price"],
+                        "Strat %":  r["Net %"],
+                        "B&H %":    r["B&H %"],
+                        "Win Rate": r["Win Rate"],
                     } for r in sell_stocks])
                     st.dataframe(sell_df.style.map(pct_color, subset=["Strat %","B&H %"]),
                                  use_container_width=True, hide_index=True)
                 else:
                     st.info("No SELL signals.")
 
-            # ── WATCHLIST ──────────────────────────────────────
+            # WATCHLIST
             if st.session_state.watchlist:
                 st.markdown("---")
-                st.markdown("### ★ My Watchlist")
+                st.markdown("### My Watchlist")
                 wl_rows = [r for r in period_data if r["Ticker"] in st.session_state.watchlist]
                 if wl_rows:
                     wl_df = pd.DataFrame([{
@@ -329,9 +335,7 @@ if st.session_state.results:
 
             st.markdown("---")
 
-
-
-            # ── FULL LEADERBOARD ───────────────────────────────
+            # FULL LEADERBOARD
             st.subheader("Full Leaderboard")
             mkt_filter = st.radio("Filter:", ["All","US","India","Crypto"],
                                    horizontal=True, key=f"mkt_{period_label}")
@@ -340,32 +344,30 @@ if st.session_state.results:
             if filtered:
                 disp_df = pd.DataFrame([{
                     "Ticker":       r["Ticker"].replace(".NS","").replace("-USD",""),
-                    "Market":       r["Market"], "Price": r["Price"], "Signal": r["Signal"],
-                    "Strategy %":   r["Net %"],  "Buy & Hold %": r["B&H %"],
-                    "Win Rate %":   r["Win Rate"], "Trades": r["Trades"], "End Value": r["End Value"],
+                    "Market":       r["Market"],
+                    "Price":        r["Price"],
+                    "Signal":       r["Signal"],
+                    "Strategy %":   r["Net %"],
+                    "Buy & Hold %": r["B&H %"],
+                    "Win Rate %":   r["Win Rate"],
+                    "Trades":       r["Trades"],
+                    "End Value":    r["End Value"],
                 } for r in filtered])
-
-                def sig_color2(v):
-                    if v == "BUY":  return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
-                    if v == "SELL": return "background-color:#3a1a1a;color:#f85149;font-weight:bold"
-                    return ""
-
                 st.dataframe(
-                    disp_df.style.map(sig_color2, subset=["Signal"]).map(pct_color, subset=["Strategy %","Buy & Hold %"]),
+                    disp_df.style.map(sig_color, subset=["Signal"]).map(pct_color, subset=["Strategy %","Buy & Hold %"]),
                     use_container_width=True, hide_index=True
                 )
 
             st.markdown("---")
 
-            # ── CHART & TRADE LOG ──────────────────────────────
-            st.markdown("---")
+            # CHART & TRADE LOG — single search with suggestions
             st.subheader("Chart & Trade Log")
 
             ch1, ch2 = st.columns([3, 1])
             with ch1:
                 chart_search = st.text_input(
                     "Stock",
-                    placeholder="Type ticker or name e.g. USAR, Apple, Reliance...",
+                    placeholder="Type ticker or company name e.g. USAR, Apple, Reliance...",
                     label_visibility="collapsed",
                     key=f"chart_search_{period_label}"
                 )
@@ -376,31 +378,33 @@ if st.session_state.results:
                     key=f"chart_mkt_{period_label}"
                 )
 
-            # Inline suggestions — replaces the button if results found
+            # Live suggestions as user types
             final_ticker = None
             if chart_search.strip() and len(chart_search.strip()) >= 2:
                 try:
-                    search_results = yf.Search(chart_search.strip(), max_results=7).quotes
+                    sq = yf.Search(chart_search.strip(), max_results=7).quotes
                     suggestions = [
-                        f"{q.get('symbol','')} — {q.get('shortname', q.get('longname',''))}"
-                        for q in search_results if q.get("symbol") and q.get("shortname") or q.get("longname")
+                        f"{q.get('symbol','')} — {q.get('shortname') or q.get('longname','')}"
+                        for q in sq if q.get("symbol")
                     ]
                     if suggestions:
                         chosen = st.selectbox(
-                            "Select stock:",
+                            "Pick:",
                             suggestions,
                             key=f"suggest_{period_label}",
                             label_visibility="collapsed"
                         )
-                        final_ticker = chosen.split(" — ")[0].strip() if chosen else None
+                        if chosen:
+                            final_ticker = chosen.split(" — ")[0].strip()
                 except Exception:
                     pass
 
-            chart_go = st.button("Search & View Chart", key=f"chart_go_{period_label}",
-                                  use_container_width=True, type="primary")
+            chart_go = st.button("Search & View Chart",
+                                  key=f"chart_go_{period_label}",
+                                  use_container_width=True,
+                                  type="primary")
 
             if chart_go:
-                raw_t = None
                 if final_ticker:
                     raw_t = final_ticker
                 elif chart_search.strip():
@@ -412,32 +416,26 @@ if st.session_state.results:
                 else:
                     raw_t = None
 
-                if raw_t is not None:
-                if chart_mkt == "India (NSE)" and not raw_t.endswith(".NS"):
-                    t_try = raw_t + ".NS"
-                elif chart_mkt == "Crypto" and not raw_t.endswith("-USD"):
-                    t_try = raw_t + "-USD"
-                else:
-                    t_try = raw_t
-                st.session_state[f"chart_sel_{period_label}"] = t_try
-
-                # Fetch if not already in results
-                if not any(r["Ticker"] == t_try for r in period_data):
-                    with st.spinner(f"Fetching & backtesting {t_try}..."):
-                        try:
-                            new_rows = process_ticker(t_try, strategy_name, selected_periods, capital)
-                            if new_rows and period_label in new_rows:
-                                st.session_state.results[period_label].append(new_rows[period_label])
-                                st.session_state.results[period_label].sort(key=lambda x: x["Net %"], reverse=True)
-                                st.rerun()
-                            else:
-                                st.error(f"No data found for '{t_try}'. Check ticker.")
+                if raw_t:
+                    st.session_state[f"chart_sel_{period_label}"] = raw_t
+                    if not any(r["Ticker"] == raw_t for r in period_data):
+                        with st.spinner(f"Fetching & backtesting {raw_t}..."):
+                            try:
+                                new_rows = process_ticker(raw_t, strategy_name, selected_periods, capital)
+                                if new_rows and period_label in new_rows:
+                                    st.session_state.results[period_label].append(new_rows[period_label])
+                                    st.session_state.results[period_label].sort(key=lambda x: x["Net %"], reverse=True)
+                                    st.rerun()
+                                else:
+                                    st.error(f"No data for '{raw_t}'. Check ticker.")
+                                    st.session_state[f"chart_sel_{period_label}"] = None
+                            except Exception as e:
+                                st.error(f"Error: {e}")
                                 st.session_state[f"chart_sel_{period_label}"] = None
-                        except Exception as e:
-                            st.error(f"Error fetching {t_try}: {e}")
-                            st.session_state[f"chart_sel_{period_label}"] = None
+                    else:
+                        st.rerun()
 
-            # Determine which row to show
+            # Determine which stock to show
             sel_ticker = st.session_state.get(f"chart_sel_{period_label}")
             row = None
             if sel_ticker:
@@ -453,7 +451,6 @@ if st.session_state.results:
                 lbl     = sel_ticker.replace(".NS","").replace("-USD","")
                 in_wl   = sel_ticker in st.session_state.watchlist
 
-                # Performance cards + watchlist button on same row
                 st.markdown(f"#### {lbl} — {row['Market']}")
                 m1, m2, m3, m4, m5 = st.columns(5)
                 sig_col = "#3fb950" if row["Signal"] == "BUY" else "#f85149"
@@ -463,24 +460,21 @@ if st.session_state.results:
                 m4.metric("Win Rate",  f"{row['Win Rate']}%")
                 m5.metric("End Value", f"{curr} {row['End Value']:,.0f}")
 
-                # Watchlist toggle button
                 if in_wl:
-                    if st.button(f"★ Remove {lbl} from Watchlist", key=f"wl_chart_{period_label}"):
+                    if st.button(f"Remove {lbl} from Watchlist", key=f"wl_chart_{period_label}"):
                         st.session_state.watchlist.remove(sel_ticker)
                         st.rerun()
                 else:
-                    if st.button(f"☆ Add {lbl} to Watchlist", key=f"wl_chart_{period_label}", type="primary"):
+                    if st.button(f"Add {lbl} to Watchlist", key=f"wl_chart_{period_label}", type="primary"):
                         st.session_state.watchlist.append(sel_ticker)
                         st.rerun()
 
-                # Timeframe
                 tf_choice = st.radio("View:", ["1M","3M","6M","1Y","Full"], index=4,
                                      horizontal=True, key=f"tf_{period_label}_{sel_ticker}")
                 tf_map  = {"1M":30,"3M":90,"6M":180,"1Y":365}
                 df_view = df_plot if tf_choice == "Full" else \
                           df_plot[df_plot.index >= df_plot.index.max() - timedelta(days=tf_map[tf_choice])]
 
-                # Chart
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Close"],
                                           name="Price", line=dict(color="white", width=1.5)))
@@ -490,17 +484,25 @@ if st.session_state.results:
                         if c_n in df_view.columns:
                             fig.add_trace(go.Scatter(x=df_view.index, y=df_view[c_n], name=nm, line=dict(color=color, width=1)))
                 elif s == "LuxAlgo ATR Channel" and "Band" in df_view.columns:
-                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Band"], name="ATR Band", line=dict(color="lime", width=1.5, dash="dot")))
+                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Band"], name="ATR Band",
+                                              line=dict(color="lime", width=1.5, dash="dot")))
                 elif s == "MACD Momentum" and "MACD" in df_view.columns:
-                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["MACD"],    name="MACD",   line=dict(color="cyan",    width=1)))
-                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["MACDSig"], name="Signal", line=dict(color="magenta", width=1, dash="dot")))
+                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["MACD"],    name="MACD",
+                                              line=dict(color="cyan", width=1)))
+                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["MACDSig"], name="Signal",
+                                              line=dict(color="magenta", width=1, dash="dot")))
                 elif s == "EMA 9/21 Ribbon" and "EMA9" in df_view.columns:
-                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["EMA9"],  name="EMA 9",  line=dict(color="lime",   width=1)))
-                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["EMA21"], name="EMA 21", line=dict(color="orange", width=1)))
+                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["EMA9"],  name="EMA 9",
+                                              line=dict(color="lime", width=1)))
+                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["EMA21"], name="EMA 21",
+                                              line=dict(color="orange", width=1)))
                 elif s == "Bollinger Band Squeeze" and "BBUp" in df_view.columns:
-                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBUp"],  name="BB Upper", line=dict(color="orange", width=1, dash="dot")))
-                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBLow"], name="BB Lower", line=dict(color="orange", width=1, dash="dot")))
-                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBMid"], name="BB Mid",   line=dict(color="gray",   width=1)))
+                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBUp"],  name="BB Upper",
+                                              line=dict(color="orange", width=1, dash="dot")))
+                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBLow"], name="BB Lower",
+                                              line=dict(color="orange", width=1, dash="dot")))
+                    fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBMid"], name="BB Mid",
+                                              line=dict(color="gray", width=1)))
 
                 buy_dates   = [t["Entry Date"] for t in log]
                 buy_prices  = [t["Entry Price"] for t in log]
@@ -513,11 +515,11 @@ if st.session_state.results:
                     fig.add_trace(go.Scatter(x=sell_dates, y=sell_prices, mode="markers",
                                               name="SELL", marker=dict(symbol="triangle-down", color="red", size=10)))
 
-                fig.update_layout(template="plotly_dark", height=450, margin=dict(l=20,r=20,t=30,b=20),
+                fig.update_layout(template="plotly_dark", height=450,
+                                   margin=dict(l=20,r=20,t=30,b=20),
                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Trade Log
                 st.subheader("Trade Log")
                 if log:
                     log_df = pd.DataFrame(log)
@@ -529,10 +531,12 @@ if st.session_state.results:
                         if v == "OPEN":   return "color:#3fb950;font-weight:bold"
                         if v == "CLOSED": return "color:#8b949e"
                         return ""
-                    st.dataframe(log_df.style.map(cr, subset=["Return %"]).map(cst, subset=["Status"]),
-                                 use_container_width=True, hide_index=True)
+                    st.dataframe(
+                        log_df.style.map(cr, subset=["Return %"]).map(cst, subset=["Status"]),
+                        use_container_width=True, hide_index=True
+                    )
                 else:
                     st.info("No trades triggered.")
 
 else:
-    st.info("Select a strategy and click a Run button in the sidebar to start the backtest.")
+    st.info("Select a strategy and click a Run button in the sidebar to start.")
