@@ -140,13 +140,17 @@ def generate_signals(df, strategy):
         df["Signal"] = df["Signal"].replace(0, np.nan).ffill().fillna(-1)
 
     elif strategy == "Smart Money Concepts (SMC)":
-        # --- Average body for strong candle detection ---
-        body = (df["Close"] - df["Open"]).abs()
+        # HTF trend
+        sma50  = compute_sma(df["Close"], 50)
+        sma200 = compute_sma(df["Close"], 200)
+
+        # Average body
+        body     = (df["Close"] - df["Open"]).abs()
         avg_body = body.rolling(14).mean()
         strong_up = (df["Close"] > df["Open"]) & (body > avg_body * 1.5)
         strong_dn = (df["Close"] < df["Open"]) & (body > avg_body * 1.5)
 
-        # --- Order Blocks: candle before a strong move ---
+        # Order Blocks
         ob_bull_top = df["High"].shift(1).where(strong_up, np.nan).ffill()
         ob_bull_bot = df["Low"].shift(1).where(strong_up, np.nan).ffill()
         ob_bear_top = df["High"].shift(1).where(strong_dn, np.nan).ffill()
@@ -154,45 +158,60 @@ def generate_signals(df, strategy):
         in_bull_ob  = (df["Close"] >= ob_bull_bot) & (df["Close"] <= ob_bull_top)
         in_bear_ob  = (df["Close"] >= ob_bear_bot) & (df["Close"] <= ob_bear_top)
 
-        # --- Fair Value Gap ---
+        # Fair Value Gap
         bull_fvg = df["Low"] > df["High"].shift(2)
         bear_fvg = df["High"] < df["Low"].shift(2)
 
-        # --- Break of Structure ---
-        swing_hi  = df["High"].rolling(20).max()
-        swing_lo  = df["Low"].rolling(20).min()
-        bos_bull  = df["Close"] > swing_hi.shift(1)
-        bos_bear  = df["Close"] < swing_lo.shift(1)
+        # Break of Structure
+        swing_hi = df["High"].rolling(20).max()
+        swing_lo = df["Low"].rolling(20).min()
+        bos_bull = df["Close"] > swing_hi.shift(1)
+        bos_bear = df["Close"] < swing_lo.shift(1)
 
-        # --- HTF trend for CHoCH ---
-        sma50     = compute_sma(df["Close"], 50)
-        htf_bull  = df["Close"] > sma50
-        choch_bull = (~htf_bull.shift(1).fillna(False)) & bos_bull
-        choch_bear = (htf_bull.shift(1).fillna(False))  & bos_bear
+        # CHoCH — structure shift
+        choch_bull = (df["Close"] > sma50) & (df["Close"].shift(1) <= sma50.shift(1))
+        choch_bear = (df["Close"] < sma50) & (df["Close"].shift(1) >= sma50.shift(1))
 
-        # --- Liquidity Sweep ---
+        # Liquidity Sweep — KEY signal, weighted highest
         prev_hi    = df["High"].rolling(20).max().shift(1)
         prev_lo    = df["Low"].rolling(20).min().shift(1)
         bull_sweep = (df["Low"] < prev_lo) & (df["Close"] > prev_lo) & (df["Close"] > df["Open"])
         bear_sweep = (df["High"] > prev_hi) & (df["Close"] < prev_hi) & (df["Close"] < df["Open"])
 
-        # --- Score bullish / bearish SMC signals ---
-        bull_score = (in_bull_ob.astype(int) +
-                      bull_fvg.astype(int) +
-                      bull_sweep.astype(int) * 2 +
-                      (bos_bull | choch_bull).astype(int))
-        bear_score = (in_bear_ob.astype(int) +
-                      bear_fvg.astype(int) +
-                      bear_sweep.astype(int) * 2 +
-                      (bos_bear | choch_bear).astype(int))
+        # Demand / Supply zones using recent swing lows/highs
+        near_demand = df["Close"] <= (prev_lo * 1.05)   # within 5% of swing low
+        near_supply = df["Close"] >= (prev_hi * 0.95)   # within 5% of swing high
 
-        df["SMC_Bull"] = bull_score
-        df["SMC_Bear"] = bear_score
+        # Score — bull sweep + CHoCH weighted heavily
+        bull_score = (
+            in_bull_ob.astype(int) * 1 +
+            bull_fvg.astype(int)   * 1 +
+            bull_sweep.astype(int) * 3 +   # strongest signal
+            choch_bull.astype(int) * 2 +   # structure shift
+            bos_bull.astype(int)   * 2 +
+            near_demand.astype(int)* 1
+        )
+        bear_score = (
+            in_bear_ob.astype(int) * 1 +
+            bear_fvg.astype(int)   * 1 +
+            bear_sweep.astype(int) * 3 +
+            choch_bear.astype(int) * 2 +
+            bos_bear.astype(int)   * 2 +
+            near_supply.astype(int)* 1
+        )
 
-        buy  = (bull_score >= 2) & (bull_score > bear_score)
-        sell = (bear_score >= 2) & (bear_score > bull_score)
+        # Also use 200 SMA as macro trend filter
+        macro_bull = df["Close"] > sma200
+        macro_bear = df["Close"] < sma200
+
+        # Final signal — need score >= 3 AND macro trend alignment
+        buy  = (bull_score >= 3) & (bull_score > bear_score)
+        sell = (bear_score >= 3) & (bear_score > bull_score) & macro_bear
+
         df["Signal"] = np.where(buy, 1, np.where(sell, -1, 0))
         df["Signal"] = df["Signal"].replace(0, np.nan).ffill().fillna(-1)
+        df["SMC_Bull"] = bull_score
+        df["SMC_Bear"] = bear_score
 
     return df
 
