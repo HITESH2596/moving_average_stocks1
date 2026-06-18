@@ -574,30 +574,26 @@ if st.session_state.results:
                                               line=dict(color="orange", width=1)))
                 elif s == "Smart Money Concepts (SMC)":
                     try:
-                        close_vals = df_view["Close"] if "Close" in df_view.columns else df_view.iloc[:, 0]
-                        n = len(close_vals)
-                        sma50_v  = close_vals.rolling(min(50, n)).mean()
-                        sma200_v = close_vals.rolling(min(200, n)).mean()
-                        fig.add_trace(go.Scatter(x=df_view.index, y=sma50_v,
+                        dv = df_view.copy().reset_index()
+                        date_col = dv.columns[0]
+                        close_col = "Close" if "Close" in dv.columns else dv.columns[1]
+                        n = len(dv)
+                        sma50_v  = dv[close_col].rolling(min(50,  n)).mean()
+                        sma200_v = dv[close_col].rolling(min(200, n)).mean()
+                        fig.add_trace(go.Scatter(x=dv[date_col], y=sma50_v,
                             name="SMA 50",  line=dict(color="orange",  width=1, dash="dot")))
-                        fig.add_trace(go.Scatter(x=df_view.index, y=sma200_v,
+                        fig.add_trace(go.Scatter(x=dv[date_col], y=sma200_v,
                             name="SMA 200", line=dict(color="magenta", width=1.5, dash="dot")))
-                    except Exception:
-                        pass
-                    try:
-                        low_vals   = df_view["Low"]
-                        open_vals  = df_view["Open"]
-                        close_vals = df_view["Close"]
-                        roll_n     = min(20, max(2, len(low_vals) - 1))
-                        prev_lo    = low_vals.rolling(roll_n).min().shift(1)
-                        mask = ((low_vals < prev_lo) & (close_vals > open_vals)).fillna(False)
-                        if mask.any():
-                            fig.add_trace(go.Scatter(
-                                x=df_view.index[mask],
-                                y=low_vals[mask],
-                                mode="markers", name="Liq Sweep",
-                                marker=dict(symbol="triangle-up", color="lime", size=12)
-                            ))
+                        if "Low" in dv.columns and "Open" in dv.columns:
+                            roll_n  = min(20, max(2, n - 1))
+                            prev_lo = dv["Low"].rolling(roll_n).min().shift(1)
+                            mask    = ((dv["Low"] < prev_lo) & (dv[close_col] > dv["Open"])).fillna(False)
+                            if mask.any():
+                                fig.add_trace(go.Scatter(
+                                    x=dv[date_col][mask], y=dv["Low"][mask],
+                                    mode="markers", name="Liq Sweep",
+                                    marker=dict(symbol="triangle-up", color="lime", size=12)
+                                ))
                     except Exception:
                         pass
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBUp"],  name="BB Upper",
