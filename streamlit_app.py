@@ -264,77 +264,68 @@ if st.session_state.results:
                 try: return "color:#3fb950" if float(v) >= 0 else "color:#f85149"
                 except: return ""
 
+            def sig_color(v):
+                if v == "BUY":  return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
+                if v == "SELL": return "background-color:#3a1a1a;color:#f85149;font-weight:bold"
+                return ""
+
             buy_stocks  = [r for r in period_data if r["Signal"] == "BUY"]
             sell_stocks = [r for r in period_data if r["Signal"] == "SELL"]
 
-            # ── BUY LIST WITH INLINE WATCHLIST BUTTON ─────────
-            st.markdown("### BUY Signals")
-            st.success(f"{len(buy_stocks)} stocks currently on BUY")
-            if buy_stocks:
-                for r in buy_stocks:
-                    lbl     = r["Ticker"].replace(".NS","").replace("-USD","")
-                    in_wl   = r["Ticker"] in st.session_state.watchlist
-                    c1,c2,c3,c4,c5,c6 = st.columns([2,1,1.2,1.2,1.2,1.5])
-                    c1.markdown(f"**{lbl}** `{r['Market']}`")
-                    c2.markdown(f"**{r['Price']}**")
-                    c3.markdown(f"<span style='color:#3fb950'>Strat: {r['Net %']}%</span>", unsafe_allow_html=True)
-                    c4.markdown(f"B&H: {r['B&H %']}%")
-                    c5.markdown(f"WR: {r['Win Rate']}%")
-                    if in_wl:
-                        if c6.button(f"★ In Watchlist", key=f"wl_buy_{period_label}_{lbl}"):
-                            st.session_state.watchlist.remove(r["Ticker"])
-                            st.rerun()
-                    else:
-                        if c6.button(f"☆ Add Watchlist", key=f"wl_buy_{period_label}_{lbl}"):
-                            st.session_state.watchlist.append(r["Ticker"])
-                            st.rerun()
-            else:
-                st.info("No BUY signals.")
+            # ── BUY / SELL as clean tables side by side ────────
+            st.markdown("### Signal Summary")
+            col_b, col_s = st.columns(2)
 
-            st.markdown("---")
+            with col_b:
+                st.success(f"BUY Signals — {len(buy_stocks)} stocks")
+                if buy_stocks:
+                    buy_df = pd.DataFrame([{
+                        "Ticker":  r["Ticker"].replace(".NS","").replace("-USD",""),
+                        "Market":  r["Market"],
+                        "Price":   r["Price"],
+                        "Strat %": r["Net %"],
+                        "B&H %":   r["B&H %"],
+                        "Win Rate":r["Win Rate"],
+                    } for r in buy_stocks])
+                    st.dataframe(buy_df.style.map(pct_color, subset=["Strat %","B&H %"]),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.info("No BUY signals.")
 
-            # ── SELL LIST WITH INLINE WATCHLIST BUTTON ────────
-            st.markdown("### SELL / CASH Signals")
-            st.error(f"{len(sell_stocks)} stocks currently on SELL")
-            if sell_stocks:
-                for r in sell_stocks:
-                    lbl     = r["Ticker"].replace(".NS","").replace("-USD","")
-                    in_wl   = r["Ticker"] in st.session_state.watchlist
-                    c1,c2,c3,c4,c5,c6 = st.columns([2,1,1.2,1.2,1.2,1.5])
-                    c1.markdown(f"**{lbl}** `{r['Market']}`")
-                    c2.markdown(f"**{r['Price']}**")
-                    c3.markdown(f"<span style='color:#f85149'>Strat: {r['Net %']}%</span>", unsafe_allow_html=True)
-                    c4.markdown(f"B&H: {r['B&H %']}%")
-                    c5.markdown(f"WR: {r['Win Rate']}%")
-                    if in_wl:
-                        if c6.button(f"★ In Watchlist", key=f"wl_sell_{period_label}_{lbl}"):
-                            st.session_state.watchlist.remove(r["Ticker"])
-                            st.rerun()
-                    else:
-                        if c6.button(f"☆ Add Watchlist", key=f"wl_sell_{period_label}_{lbl}"):
-                            st.session_state.watchlist.append(r["Ticker"])
-                            st.rerun()
-            else:
-                st.info("No SELL signals.")
+            with col_s:
+                st.error(f"SELL / CASH — {len(sell_stocks)} stocks")
+                if sell_stocks:
+                    sell_df = pd.DataFrame([{
+                        "Ticker":  r["Ticker"].replace(".NS","").replace("-USD",""),
+                        "Market":  r["Market"],
+                        "Price":   r["Price"],
+                        "Strat %": r["Net %"],
+                        "B&H %":   r["B&H %"],
+                        "Win Rate":r["Win Rate"],
+                    } for r in sell_stocks])
+                    st.dataframe(sell_df.style.map(pct_color, subset=["Strat %","B&H %"]),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.info("No SELL signals.")
 
-            # ── WATCHLIST SUMMARY ─────────────────────────────
+            # ── WATCHLIST ──────────────────────────────────────
             if st.session_state.watchlist:
                 st.markdown("---")
                 st.markdown("### ★ My Watchlist")
-                wl_in_results = [r for r in period_data if r["Ticker"] in st.session_state.watchlist]
-                if wl_in_results:
-                    for r in wl_in_results:
-                        lbl  = r["Ticker"].replace(".NS","").replace("-USD","")
-                        sig_color = "#3fb950" if r["Signal"] == "BUY" else "#f85149"
-                        c1,c2,c3,c4,c5,c6 = st.columns([2,1,1.2,1.2,1.2,1.5])
-                        c1.markdown(f"**{lbl}** `{r['Market']}`")
-                        c2.markdown(f"**{r['Price']}**")
-                        c3.markdown(f"<span style='color:{sig_color}'>{r['Signal']}</span>", unsafe_allow_html=True)
-                        c4.markdown(f"Strat: {r['Net %']}%")
-                        c5.markdown(f"B&H: {r['B&H %']}%")
-                        if c6.button(f"✕ Remove", key=f"wl_rm2_{period_label}_{lbl}"):
-                            st.session_state.watchlist.remove(r["Ticker"])
-                            st.rerun()
+                wl_rows = [r for r in period_data if r["Ticker"] in st.session_state.watchlist]
+                if wl_rows:
+                    wl_df = pd.DataFrame([{
+                        "Ticker":  r["Ticker"].replace(".NS","").replace("-USD",""),
+                        "Market":  r["Market"],
+                        "Price":   r["Price"],
+                        "Signal":  r["Signal"],
+                        "Strat %": r["Net %"],
+                        "B&H %":   r["B&H %"],
+                    } for r in wl_rows])
+                    st.dataframe(
+                        wl_df.style.map(sig_color, subset=["Signal"]).map(pct_color, subset=["Strat %","B&H %"]),
+                        use_container_width=True, hide_index=True
+                    )
 
             st.markdown("---")
 
@@ -409,14 +400,60 @@ if st.session_state.results:
 
             # ── CHART & TRADE LOG ──────────────────────────────
             st.subheader("Chart & Trade Log")
-            ticker_choices = [r["Ticker"] for r in (filtered if filtered else period_data)]
-            if not ticker_choices:
-                st.info("No tickers to display.")
-                continue
+            st.caption("Select from backtested stocks below, or search any new stock to inspect it.")
+
+            # Search any stock directly here
+            ch1, ch2, ch3 = st.columns([3, 1, 1])
+            with ch1:
+                chart_search = st.text_input("Search any stock",
+                    placeholder="Type ticker e.g. AAPL, RELIANCE, BTC...",
+                    label_visibility="collapsed", key=f"chart_search_{period_label}")
+            with ch2:
+                chart_mkt = st.selectbox("Mkt", ["US","India (NSE)","Crypto"],
+                    label_visibility="collapsed", key=f"chart_mkt_{period_label}")
+            with ch3:
+                chart_go = st.button("Search", key=f"chart_go_{period_label}",
+                    use_container_width=True, type="primary")
+
+            if chart_go and chart_search.strip():
+                raw_t = chart_search.strip().upper().replace(" ","")
+                if chart_mkt == "India (NSE)" and not raw_t.endswith(".NS"):
+                    t_try = raw_t + ".NS"
+                elif chart_mkt == "Crypto" and not raw_t.endswith("-USD"):
+                    t_try = raw_t + "-USD"
+                else:
+                    t_try = raw_t
+                # If already in results just set as selected, else fetch
+                exists = any(r["Ticker"] == t_try for r in period_data)
+                if not exists:
+                    with st.spinner(f"Fetching {t_try}..."):
+                        try:
+                            new_rows = process_ticker(t_try, strategy_name, selected_periods, capital)
+                            if new_rows and period_label in new_rows:
+                                st.session_state.results[period_label].append(new_rows[period_label])
+                                st.session_state.results[period_label].sort(key=lambda x: x["Net %"], reverse=True)
+                                st.session_state[f"chart_sel_{period_label}"] = t_try
+                                st.success(f"{t_try} — Signal: {new_rows[period_label]['Signal']} | Return: {new_rows[period_label]['Net %']}%")
+                                st.rerun()
+                            else:
+                                st.error(f"No data for '{t_try}'. Check ticker.")
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                else:
+                    st.session_state[f"chart_sel_{period_label}"] = t_try
+                    st.rerun()
+
+            # Dropdown from backtested stocks (pre-select if searched)
+            ticker_choices = [r["Ticker"] for r in period_data]
+            default_idx = 0
+            saved_sel = st.session_state.get(f"chart_sel_{period_label}")
+            if saved_sel and saved_sel in ticker_choices:
+                default_idx = ticker_choices.index(saved_sel)
 
             selected_ticker = st.selectbox(
-                "Select asset to inspect:",
+                "Or pick from backtested stocks:",
                 options=ticker_choices,
+                index=default_idx,
                 format_func=lambda x: x.replace(".NS","").replace("-USD",""),
                 key=f"sel_{period_label}"
             )
