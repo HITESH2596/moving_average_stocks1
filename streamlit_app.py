@@ -32,6 +32,7 @@ STRATEGIES = [
     "Mean Reversion - Dip Buy",
     "EMA 9/21 Ribbon",
     "Bollinger Band Squeeze",
+    "Smart Money Concepts (SMC)",
 ]
 
 # ---------------------------------------------------------------
@@ -137,6 +138,62 @@ def generate_signals(df, strategy):
         sell = (df["Close"] > df["BBUp"])   | (df["RSI"] > 65)
         df["Signal"] = np.where(buy, 1, np.where(sell, -1, 0))
         df["Signal"] = df["Signal"].replace(0, np.nan).ffill().fillna(-1)
+
+    elif strategy == "Smart Money Concepts (SMC)":
+        # --- Average body for strong candle detection ---
+        body = (df["Close"] - df["Open"]).abs()
+        avg_body = body.rolling(14).mean()
+        strong_up = (df["Close"] > df["Open"]) & (body > avg_body * 1.5)
+        strong_dn = (df["Close"] < df["Open"]) & (body > avg_body * 1.5)
+
+        # --- Order Blocks: candle before a strong move ---
+        ob_bull_top = df["High"].shift(1).where(strong_up, np.nan).ffill()
+        ob_bull_bot = df["Low"].shift(1).where(strong_up, np.nan).ffill()
+        ob_bear_top = df["High"].shift(1).where(strong_dn, np.nan).ffill()
+        ob_bear_bot = df["Low"].shift(1).where(strong_dn, np.nan).ffill()
+        in_bull_ob  = (df["Close"] >= ob_bull_bot) & (df["Close"] <= ob_bull_top)
+        in_bear_ob  = (df["Close"] >= ob_bear_bot) & (df["Close"] <= ob_bear_top)
+
+        # --- Fair Value Gap ---
+        bull_fvg = df["Low"] > df["High"].shift(2)
+        bear_fvg = df["High"] < df["Low"].shift(2)
+
+        # --- Break of Structure ---
+        swing_hi  = df["High"].rolling(20).max()
+        swing_lo  = df["Low"].rolling(20).min()
+        bos_bull  = df["Close"] > swing_hi.shift(1)
+        bos_bear  = df["Close"] < swing_lo.shift(1)
+
+        # --- HTF trend for CHoCH ---
+        sma50     = compute_sma(df["Close"], 50)
+        htf_bull  = df["Close"] > sma50
+        choch_bull = (~htf_bull.shift(1).fillna(False)) & bos_bull
+        choch_bear = (htf_bull.shift(1).fillna(False))  & bos_bear
+
+        # --- Liquidity Sweep ---
+        prev_hi    = df["High"].rolling(20).max().shift(1)
+        prev_lo    = df["Low"].rolling(20).min().shift(1)
+        bull_sweep = (df["Low"] < prev_lo) & (df["Close"] > prev_lo) & (df["Close"] > df["Open"])
+        bear_sweep = (df["High"] > prev_hi) & (df["Close"] < prev_hi) & (df["Close"] < df["Open"])
+
+        # --- Score bullish / bearish SMC signals ---
+        bull_score = (in_bull_ob.astype(int) +
+                      bull_fvg.astype(int) +
+                      bull_sweep.astype(int) * 2 +
+                      (bos_bull | choch_bull).astype(int))
+        bear_score = (in_bear_ob.astype(int) +
+                      bear_fvg.astype(int) +
+                      bear_sweep.astype(int) * 2 +
+                      (bos_bear | choch_bear).astype(int))
+
+        df["SMC_Bull"] = bull_score
+        df["SMC_Bear"] = bear_score
+
+        buy  = (bull_score >= 2) & (bull_score > bear_score)
+        sell = (bear_score >= 2) & (bear_score > bull_score)
+        df["Signal"] = np.where(buy, 1, np.where(sell, -1, 0))
+        df["Signal"] = df["Signal"].replace(0, np.nan).ffill().fillna(-1)
+
     return df
 
 # ---------------------------------------------------------------
@@ -496,7 +553,30 @@ if st.session_state.results:
                                               line=dict(color="lime", width=1)))
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["EMA21"], name="EMA 21",
                                               line=dict(color="orange", width=1)))
-                elif s == "Bollinger Band Squeeze" and "BBUp" in df_view.columns:
+                elif s == "Smart Money Concepts (SMC)":
+                    # Demand zone (bull OB area)
+                    if "SMC_Bull" in df_view.columns:
+                        sma50_v = compute_sma(df_view["Close"], min(50, len(df_view)))
+                        fig.add_trace(go.Scatter(
+                            x=df_view.index, y=sma50_v,
+                            name="SMA 50 (HTF Trend)",
+                            line=dict(color="orange", width=1, dash="dot")
+                        ))
+                        # Highlight demand zones (bull sweep candles)
+                        bull_sweep_idx = df_view.index[
+                            (df_view["Low"] < df_view["Low"].rolling(20).min().shift(1)) &
+                            (df_view["Close"] > df_view["Open"])
+                        ]
+                        for idx in bull_sweep_idx[-5:]:
+                            fig.add_vrect(
+                                x0=idx, x1=idx,
+                                fillcolor="rgba(0,255,100,0.15)",
+                                layer="below", line_width=2,
+                                line_color="rgba(0,255,100,0.5)",
+                                annotation_text="Liq Sweep",
+                                annotation_font_size=9,
+                                annotation_font_color="lime"
+                            )
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBUp"],  name="BB Upper",
                                               line=dict(color="orange", width=1, dash="dot")))
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBLow"], name="BB Lower",
