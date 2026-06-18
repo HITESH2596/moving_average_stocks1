@@ -360,13 +360,12 @@ if st.session_state.results:
             # ── CHART & TRADE LOG ──────────────────────────────
             st.markdown("---")
             st.subheader("Chart & Trade Log")
-            st.caption("Search any stock — get chart, performance & add to watchlist in one place.")
 
             ch1, ch2 = st.columns([3, 1])
             with ch1:
                 chart_search = st.text_input(
                     "Stock",
-                    placeholder="Search any stock e.g. USAR, AAPL, RELIANCE, BTC...",
+                    placeholder="Type ticker or name e.g. USAR, Apple, Reliance...",
                     label_visibility="collapsed",
                     key=f"chart_search_{period_label}"
                 )
@@ -377,36 +376,41 @@ if st.session_state.results:
                     key=f"chart_mkt_{period_label}"
                 )
 
-            # Live suggestions as user types
+            # Inline suggestions — replaces the button if results found
+            final_ticker = None
             if chart_search.strip() and len(chart_search.strip()) >= 2:
                 try:
-                    raw_q = chart_search.strip()
-                    search_results = yf.Search(raw_q, max_results=6).quotes
-                    if search_results:
-                        suggestions = [
-                            f"{q.get('symbol','')} — {q.get('shortname', q.get('longname',''))}"
-                            for q in search_results if q.get("symbol")
-                        ]
+                    search_results = yf.Search(chart_search.strip(), max_results=7).quotes
+                    suggestions = [
+                        f"{q.get('symbol','')} — {q.get('shortname', q.get('longname',''))}"
+                        for q in search_results if q.get("symbol") and q.get("shortname") or q.get("longname")
+                    ]
+                    if suggestions:
                         chosen = st.selectbox(
-                            "Suggestions (select or ignore):",
-                            [""] + suggestions,
-                            key=f"suggest_{period_label}"
+                            "Select stock:",
+                            suggestions,
+                            key=f"suggest_{period_label}",
+                            label_visibility="collapsed"
                         )
-                        if chosen:
-                            # Extract just the ticker symbol
-                            suggested_ticker = chosen.split(" — ")[0].strip()
-                            st.session_state[f"chart_search_pick_{period_label}"] = suggested_ticker
+                        final_ticker = chosen.split(" — ")[0].strip() if chosen else None
                 except Exception:
                     pass
 
             chart_go = st.button("Search & View Chart", key=f"chart_go_{period_label}",
                                   use_container_width=True, type="primary")
 
-            # Resolve ticker — use suggestion pick if available
-            if chart_go and chart_search.strip():
-                picked = st.session_state.get(f"chart_search_pick_{period_label}")
-                raw_t  = (picked if picked else chart_search.strip()).upper().replace(" ", "")
-                st.session_state[f"chart_search_pick_{period_label}"] = None
+            if chart_go:
+                raw_t = None
+                if final_ticker:
+                    raw_t = final_ticker
+                elif chart_search.strip():
+                    raw_t = chart_search.strip().upper().replace(" ", "")
+                    if chart_mkt == "India (NSE)" and not raw_t.endswith(".NS"):
+                        raw_t = raw_t + ".NS"
+                    elif chart_mkt == "Crypto" and not raw_t.endswith("-USD"):
+                        raw_t = raw_t + "-USD"
+
+                if raw_t:
                 if chart_mkt == "India (NSE)" and not raw_t.endswith(".NS"):
                     t_try = raw_t + ".NS"
                 elif chart_mkt == "Crypto" and not raw_t.endswith("-USD"):
