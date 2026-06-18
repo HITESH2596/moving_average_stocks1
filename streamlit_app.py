@@ -566,6 +566,9 @@ if st.session_state.results:
                 try:
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Close"],
                                               name="Price", line=dict(color="white", width=1.5)))
+                except Exception:
+                    fig.add_trace(go.Scatter(x=list(range(len(df_view))), y=df_view["Close"].values,
+                                              name="Price", line=dict(color="white", width=1.5)))
                 s = strategy_name
                 if s in ["Triple SMA Ribbon (20/50/200)", "Mean Reversion - Dip Buy"]:
                     for c_n, color, nm in [("SMA20","cyan","SMA 20"),("SMA50","gold","SMA 50"),("SMA200","magenta","SMA 200")]:
@@ -629,9 +632,6 @@ if st.session_state.results:
                 fig.update_layout(template="plotly_dark", height=450,
                                    margin=dict(l=20,r=20,t=30,b=20),
                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                except Exception as chart_err:
-                    st.warning(f"Chart could not render: {chart_err}")
-                    fig = go.Figure()
                 st.plotly_chart(fig, use_container_width=True)
 
                 st.subheader("Trade Log")
@@ -654,6 +654,3 @@ if st.session_state.results:
 
 else:
     st.info("Select a strategy and click a Run button in the sidebar to start.")
-    
-    
-    
