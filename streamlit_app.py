@@ -551,6 +551,12 @@ if st.session_state.results:
                 df_view = df_plot if tf_choice == "Full" else \
                           df_plot[df_plot.index >= df_plot.index.max() - timedelta(days=tf_map[tf_choice])]
 
+                # Clean df_view index for all strategies
+                df_view = df_view.copy()
+                if isinstance(df_view.index, pd.MultiIndex):
+                    df_view.index = df_view.index.get_level_values(0)
+                df_view.index = pd.to_datetime(df_view.index)
+
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Close"],
                                           name="Price", line=dict(color="white", width=1.5)))
