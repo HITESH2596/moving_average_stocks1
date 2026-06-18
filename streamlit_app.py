@@ -399,84 +399,99 @@ if st.session_state.results:
             st.markdown("---")
 
             # ── CHART & TRADE LOG ──────────────────────────────
+            st.markdown("---")
             st.subheader("Chart & Trade Log")
-            st.caption("Select from backtested stocks below, or search any new stock to inspect it.")
 
-            # Search any stock directly here
+            # Single search — no dropdown
             ch1, ch2, ch3 = st.columns([3, 1, 1])
             with ch1:
-                chart_search = st.text_input("Search any stock",
-                    placeholder="Type ticker e.g. AAPL, RELIANCE, BTC...",
-                    label_visibility="collapsed", key=f"chart_search_{period_label}")
+                chart_search = st.text_input(
+                    "Stock",
+                    placeholder="Search any stock e.g. USAR, AAPL, RELIANCE, BTC...",
+                    label_visibility="collapsed",
+                    key=f"chart_search_{period_label}"
+                )
             with ch2:
-                chart_mkt = st.selectbox("Mkt", ["US","India (NSE)","Crypto"],
-                    label_visibility="collapsed", key=f"chart_mkt_{period_label}")
+                chart_mkt = st.selectbox(
+                    "Mkt", ["US", "India (NSE)", "Crypto"],
+                    label_visibility="collapsed",
+                    key=f"chart_mkt_{period_label}"
+                )
             with ch3:
                 chart_go = st.button("Search", key=f"chart_go_{period_label}",
-                    use_container_width=True, type="primary")
+                                      use_container_width=True, type="primary")
 
+            # Resolve ticker
             if chart_go and chart_search.strip():
-                raw_t = chart_search.strip().upper().replace(" ","")
+                raw_t = chart_search.strip().upper().replace(" ", "")
                 if chart_mkt == "India (NSE)" and not raw_t.endswith(".NS"):
                     t_try = raw_t + ".NS"
                 elif chart_mkt == "Crypto" and not raw_t.endswith("-USD"):
                     t_try = raw_t + "-USD"
                 else:
                     t_try = raw_t
-                # If already in results just set as selected, else fetch
-                exists = any(r["Ticker"] == t_try for r in period_data)
-                if not exists:
-                    with st.spinner(f"Fetching {t_try}..."):
+                st.session_state[f"chart_sel_{period_label}"] = t_try
+
+                # Fetch if not already in results
+                if not any(r["Ticker"] == t_try for r in period_data):
+                    with st.spinner(f"Fetching & backtesting {t_try}..."):
                         try:
                             new_rows = process_ticker(t_try, strategy_name, selected_periods, capital)
                             if new_rows and period_label in new_rows:
                                 st.session_state.results[period_label].append(new_rows[period_label])
                                 st.session_state.results[period_label].sort(key=lambda x: x["Net %"], reverse=True)
-                                st.session_state[f"chart_sel_{period_label}"] = t_try
-                                st.success(f"{t_try} — Signal: {new_rows[period_label]['Signal']} | Return: {new_rows[period_label]['Net %']}%")
                                 st.rerun()
                             else:
-                                st.error(f"No data for '{t_try}'. Check ticker.")
+                                st.error(f"No data found for '{t_try}'. Check ticker.")
+                                st.session_state[f"chart_sel_{period_label}"] = None
                         except Exception as e:
-                            st.error(f"Error: {e}")
-                else:
-                    st.session_state[f"chart_sel_{period_label}"] = t_try
-                    st.rerun()
+                            st.error(f"Error fetching {t_try}: {e}")
+                            st.session_state[f"chart_sel_{period_label}"] = None
 
-            # Dropdown from backtested stocks (pre-select if searched)
-            ticker_choices = [r["Ticker"] for r in period_data]
-            default_idx = 0
-            saved_sel = st.session_state.get(f"chart_sel_{period_label}")
-            if saved_sel and saved_sel in ticker_choices:
-                default_idx = ticker_choices.index(saved_sel)
-
-            selected_ticker = st.selectbox(
-                "Or pick from backtested stocks:",
-                options=ticker_choices,
-                index=default_idx,
-                format_func=lambda x: x.replace(".NS","").replace("-USD",""),
-                key=f"sel_{period_label}"
-            )
-            row = next((r for r in period_data if r["Ticker"] == selected_ticker), None)
+            # Determine which row to show
+            sel_ticker = st.session_state.get(f"chart_sel_{period_label}")
+            row = None
+            if sel_ticker:
+                row = next((r for r in period_data if r["Ticker"] == sel_ticker), None)
+            if row is None and period_data:
+                row = period_data[0]
+                sel_ticker = row["Ticker"]
 
             if row:
                 df_plot = row["_df"]
                 log     = row["_log"]
-                curr    = "INR" if selected_ticker.endswith(".NS") else "USD"
+                curr    = "INR" if sel_ticker.endswith(".NS") else "USD"
+                lbl     = sel_ticker.replace(".NS","").replace("-USD","")
+                in_wl   = sel_ticker in st.session_state.watchlist
 
+                # Performance cards + watchlist button on same row
+                st.markdown(f"#### {lbl} — {row['Market']}")
                 m1, m2, m3, m4, m5 = st.columns(5)
-                m1.metric("Signal",   row["Signal"])
-                m2.metric("Strategy", f"{row['Net %']}%")
-                m3.metric("B&H",      f"{row['B&H %']}%")
-                m4.metric("Win Rate", f"{row['Win Rate']}%")
-                m5.metric("End Val",  f"{curr} {row['End Value']:,.0f}")
+                sig_col = "#3fb950" if row["Signal"] == "BUY" else "#f85149"
+                m1.markdown(f"**Signal**<br><span style='color:{sig_col};font-size:20px;font-weight:bold'>{row['Signal']}</span>", unsafe_allow_html=True)
+                m2.metric("Strategy",  f"{row['Net %']}%")
+                m3.metric("B&H",       f"{row['B&H %']}%")
+                m4.metric("Win Rate",  f"{row['Win Rate']}%")
+                m5.metric("End Value", f"{curr} {row['End Value']:,.0f}")
 
+                # Watchlist toggle button
+                if in_wl:
+                    if st.button(f"★ Remove {lbl} from Watchlist", key=f"wl_chart_{period_label}"):
+                        st.session_state.watchlist.remove(sel_ticker)
+                        st.rerun()
+                else:
+                    if st.button(f"☆ Add {lbl} to Watchlist", key=f"wl_chart_{period_label}", type="primary"):
+                        st.session_state.watchlist.append(sel_ticker)
+                        st.rerun()
+
+                # Timeframe
                 tf_choice = st.radio("View:", ["1M","3M","6M","1Y","Full"], index=4,
-                                     horizontal=True, key=f"tf_{period_label}_{selected_ticker}")
+                                     horizontal=True, key=f"tf_{period_label}_{sel_ticker}")
                 tf_map  = {"1M":30,"3M":90,"6M":180,"1Y":365}
                 df_view = df_plot if tf_choice == "Full" else \
                           df_plot[df_plot.index >= df_plot.index.max() - timedelta(days=tf_map[tf_choice])]
 
+                # Chart
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Close"],
                                           name="Price", line=dict(color="white", width=1.5)))
@@ -503,22 +518,23 @@ if st.session_state.results:
                 sell_dates  = [t["Exit Date"]   for t in log if t["Status"] == "CLOSED"]
                 sell_prices = [t["Exit Price"]  for t in log if t["Status"] == "CLOSED"]
                 if buy_dates:
-                    fig.add_trace(go.Scatter(x=buy_dates,  y=buy_prices,  mode="markers",
-                                              name="BUY",  marker=dict(symbol="triangle-up",   color="lime", size=10)))
+                    fig.add_trace(go.Scatter(x=buy_dates, y=buy_prices, mode="markers",
+                                              name="BUY", marker=dict(symbol="triangle-up", color="lime", size=10)))
                 if sell_dates:
                     fig.add_trace(go.Scatter(x=sell_dates, y=sell_prices, mode="markers",
-                                              name="SELL", marker=dict(symbol="triangle-down", color="red",  size=10)))
+                                              name="SELL", marker=dict(symbol="triangle-down", color="red", size=10)))
 
                 fig.update_layout(template="plotly_dark", height=450, margin=dict(l=20,r=20,t=30,b=20),
                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig, use_container_width=True)
 
+                # Trade Log
                 st.subheader("Trade Log")
                 if log:
                     log_df = pd.DataFrame(log)
                     log_df.rename(columns={"Portfolio": f"Portfolio ({curr})"}, inplace=True)
                     def cr(v):
-                        try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
+                        try: return "color:#3fb950" if float(v) >= 0 else "color:#f85149"
                         except: return ""
                     def cst(v):
                         if v == "OPEN":   return "color:#3fb950;font-weight:bold"
