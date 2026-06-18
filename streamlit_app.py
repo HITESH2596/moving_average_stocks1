@@ -654,3 +654,4 @@ if st.session_state.results:
 
 else:
     st.info("Select a strategy and click a Run button in the sidebar to start.")
+    
