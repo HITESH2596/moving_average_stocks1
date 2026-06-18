@@ -409,8 +409,10 @@ if st.session_state.results:
                         raw_t = raw_t + ".NS"
                     elif chart_mkt == "Crypto" and not raw_t.endswith("-USD"):
                         raw_t = raw_t + "-USD"
+                else:
+                    raw_t = None
 
-                if raw_t:
+                if raw_t is not None:
                 if chart_mkt == "India (NSE)" and not raw_t.endswith(".NS"):
                     t_try = raw_t + ".NS"
                 elif chart_mkt == "Crypto" and not raw_t.endswith("-USD"):
