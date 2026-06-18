@@ -573,28 +573,33 @@ if st.session_state.results:
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["EMA21"], name="EMA 21",
                                               line=dict(color="orange", width=1)))
                 elif s == "Smart Money Concepts (SMC)":
-                    sma50_v = compute_sma(df_view["Close"], min(50, len(df_view)))
-                    fig.add_trace(go.Scatter(
-                        x=df_view.index, y=sma50_v,
-                        name="SMA 50 (HTF Trend)",
-                        line=dict(color="orange", width=1, dash="dot")
-                    ))
                     try:
-                        prev_lo = df_view["Low"].rolling(20).min().shift(1)
-                        bull_sweep_mask = (
-                            (df_view["Low"] < prev_lo) &
-                            (df_view["Close"] > df_view["Open"])
-                        )
-                        bull_sweep_dates = df_view.index[bull_sweep_mask].tolist()
-                        for idx in bull_sweep_dates[-5:]:
-                            fig.add_vline(
-                                x=str(idx),
-                                line_color="rgba(0,255,100,0.5)",
-                                line_width=1,
-                                annotation_text="Liq",
-                                annotation_font_size=9,
-                                annotation_font_color="lime"
-                            )
+                        sma50_v = compute_sma(df_view["Close"], min(50, len(df_view)))
+                        fig.add_trace(go.Scatter(
+                            x=df_view.index, y=sma50_v,
+                            name="SMA 50", line=dict(color="orange", width=1, dash="dot")
+                        ))
+                        sma200_v = compute_sma(df_view["Close"], min(200, len(df_view)))
+                        fig.add_trace(go.Scatter(
+                            x=df_view.index, y=sma200_v,
+                            name="SMA 200", line=dict(color="magenta", width=1.5, dash="dot")
+                        ))
+                        # Mark liquidity sweeps
+                        roll_n = min(20, len(df_view) - 1)
+                        if roll_n > 2:
+                            prev_lo = df_view["Low"].rolling(roll_n).min().shift(1)
+                            bull_sweep_mask = (
+                                (df_view["Low"] < prev_lo) &
+                                (df_view["Close"] > df_view["Open"])
+                            ).fillna(False)
+                            sweep_dates  = df_view.index[bull_sweep_mask].tolist()
+                            sweep_prices = df_view["Low"][bull_sweep_mask].tolist()
+                            if sweep_dates:
+                                fig.add_trace(go.Scatter(
+                                    x=sweep_dates[-10:], y=sweep_prices[-10:],
+                                    mode="markers", name="Liq Sweep",
+                                    marker=dict(symbol="triangle-up", color="lime", size=12)
+                                ))
                     except Exception:
                         pass
                     fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBUp"],  name="BB Upper",
