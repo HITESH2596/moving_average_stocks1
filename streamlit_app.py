@@ -378,9 +378,110 @@ def get_multi_tf_consensus(ticker):
 
     return buy_v, sell_v, detail
 
-# ---------------------------------------------------------------
-# PROCESS TICKER FOR BACKTEST
-# ---------------------------------------------------------------
+def run_bot_backtest_engine(df, capital, min_votes):
+    """Backtest using consensus of all 8 strategies on same data"""
+    closes  = df["Close"].values
+    dates   = df.index
+    n       = len(df)
+
+    # Pre-compute signals for all strategies
+    all_sigs = []
+    for strat in STRATEGIES:
+        try:
+            e = generate_signals(df.copy(), strat)
+            all_sigs.append(e["Signal"].values)
+        except Exception:
+            all_sigs.append(np.zeros(n))
+
+    log, in_pos, entry, portfolio, wins, total = [], False, 0.0, float(capital), 0, 0
+    entry_date = ""
+    last_buy_v = last_sell_v = 0
+
+    for i in range(n):
+        price = closes[i]
+        if price is None or (isinstance(price, float) and np.isnan(price)): continue
+        price  = float(price)
+        date   = str(dates[i])[:16]
+        buy_v  = sum(1 for s in all_sigs if i < len(s) and s[i] ==  1)
+        sell_v = sum(1 for s in all_sigs if i < len(s) and s[i] == -1)
+        last_buy_v, last_sell_v = buy_v, sell_v
+
+        sig = 1  if (buy_v  >= min_votes and buy_v  > sell_v) else \
+             -1 if (sell_v >= min_votes and sell_v > buy_v)  else 0
+
+        if sig == 1 and not in_pos:
+            in_pos, entry, entry_date, total = True, price, date, total + 1
+        elif sig == -1 and in_pos:
+            in_pos = False
+            ret    = (price - entry) / entry
+            portfolio *= (1 + ret)
+            if price > entry: wins += 1
+            log.append({"Status":"CLOSED","Entry Date":entry_date,
+                         "Entry Price":round(entry,4),"Exit Date":date,
+                         "Exit Price":round(price,4),"Return %":round(ret*100,2),
+                         "Portfolio":round(portfolio,2),
+                         "Buy Votes":buy_v,"Sell Votes":sell_v})
+
+    if in_pos:
+        last_v = next((closes[i] for i in range(n-1,-1,-1)
+                       if closes[i] is not None and not (isinstance(closes[i],float) and np.isnan(closes[i]))), entry)
+        price  = float(last_v); ret = (price - entry) / entry
+        portfolio *= (1 + ret)
+        if price > entry: wins += 1
+        log.append({"Status":"OPEN","Entry Date":entry_date,
+                     "Entry Price":round(entry,4),"Exit Date":"Present",
+                     "Exit Price":round(price,4),"Return %":round(ret*100,2),
+                     "Portfolio":round(portfolio,2),
+                     "Buy Votes":last_buy_v,"Sell Votes":last_sell_v})
+
+    win_rate   = wins/total*100 if total > 0 else 0.0
+    last_price = float(next((closes[i] for i in range(n-1,-1,-1)
+                              if closes[i] is not None and not (isinstance(closes[i],float) and np.isnan(closes[i]))), 0))
+    valid    = df[df["Close"].notna()]
+    first_cl = float(valid["Close"].iloc[0]) if not valid.empty else last_price
+    bh_pct   = round((last_price/first_cl-1)*100,2) if first_cl > 0 else 0.0
+    net_pct  = round((portfolio/capital-1)*100,2)
+
+    last_sig = 1  if (last_buy_v  >= min_votes and last_buy_v  > last_sell_v) else \
+              -1 if (last_sell_v >= min_votes and last_sell_v > last_buy_v)  else 0
+
+    return {"net_pct":net_pct,"bh_pct":bh_pct,"end_val":round(portfolio,2),
+            "win_rate":round(win_rate,1),"trades":total,"log":log,
+            "last_price":last_price,"last_sig":last_sig,
+            "last_buy_v":last_buy_v,"last_sell_v":last_sell_v}
+
+
+def process_bot_ticker_bt(ticker, days, capital):
+    try:
+        min_votes = get_min_votes(ticker)
+        # Use daily for backtest (most data available)
+        raw = fetch_data(ticker, interval="1d", days=days+50)
+        if raw is None: return None
+        end_dt   = datetime.now()
+        cutoff   = end_dt - timedelta(days=days)
+        slice_df = raw[raw.index >= pd.to_datetime(cutoff)].copy()
+        if len(slice_df) < 30: return None
+        bt = run_bot_backtest_engine(slice_df, capital, min_votes)
+        sig_txt = "BUY" if bt["last_sig"]==1 else "SELL" if bt["last_sig"]==-1 else "HOLD"
+        return {
+            "Ticker":    ticker,
+            "Market":    get_market(ticker),
+            "Label":     ticker_label(ticker),
+            "Price":     bt["last_price"],
+            "Signal":    sig_txt,
+            "Min Votes": min_votes,
+            "Buy Votes": bt["last_buy_v"],
+            "Sell Votes":bt["last_sell_v"],
+            "Net %":     bt["net_pct"],
+            "B&H %":     bt["bh_pct"],
+            "Win Rate":  bt["win_rate"],
+            "Trades":    bt["trades"],
+            "End Value": bt["end_val"],
+            "_log":      bt["log"],
+            "_df":       slice_df,
+        }
+    except Exception:
+        return None
 def process_ticker(ticker, strategy, days, capital, interval):
     try:
         raw = fetch_data(ticker, interval=interval, days=days+50)
@@ -508,6 +609,20 @@ with tab_bt:
     run_cr  = st.sidebar.button("Run Crypto",        type="primary", use_container_width=True)
     run_cm  = st.sidebar.button("Run Commodities",   type="primary", use_container_width=True)
     run_all = st.sidebar.button("Run ALL Markets",   use_container_width=True)
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🤖 Bot Consensus Backtest")
+    st.sidebar.caption("Backtests the exact same logic the bot uses — all 8 strategies on their best timeframes, market-specific vote thresholds.")
+    st.sidebar.markdown("""
+    - 🇺🇸 US = **5/8 votes**
+    - 🇮🇳 India = **4/8 votes**
+    - 🪙 Crypto = **3/8 votes**
+    - 🛢️ Commodities = **4/8 votes**
+    """)
+    bot_bt_market = st.sidebar.selectbox("Market to bot-backtest",
+        ["US Stocks","Indian Stocks","Crypto","Commodities","All Markets"],
+        key="bot_bt_market")
+    run_bot_bt = st.sidebar.button("Run Bot Backtest", use_container_width=True, key="run_bot_bt")
 
     def do_run(tickers, label):
         with st.spinner(f"Running {label}..."):
@@ -679,6 +794,109 @@ with tab_bt:
     else:
         st.info("Choose a strategy, timeframe, and period — then click a Run button.")
 
+    # ── BOT BACKTEST RESULTS ────────────────────────────────────
+    if st.session_state.get("bot_bt"):
+        bot_rows  = st.session_state.bot_bt
+        bot_label = st.session_state.get("bot_bt_label","Bot Consensus Backtest")
+        st.markdown("---")
+        st.markdown(f"## 🤖 {bot_label}")
+        st.caption("This is exactly how the live bot would have performed — same strategies, same vote thresholds, same logic.")
+
+        buy_bt  = [r for r in bot_rows if r["Signal"]=="BUY"]
+        sell_bt = [r for r in bot_rows if r["Signal"]=="SELL"]
+        hold_bt = [r for r in bot_rows if r["Signal"]=="HOLD"]
+
+        b1, b2, b3 = st.columns(3)
+        b1.success(f"🟢 BUY — {len(buy_bt)}")
+        b2.error(  f"🔴 SELL — {len(sell_bt)}")
+        b3.info(   f"⚪ HOLD — {len(hold_bt)}")
+
+        # Top BUY signals
+        if buy_bt:
+            st.markdown("### Top BUY Signals")
+            st.dataframe(pd.DataFrame([{
+                "Asset":      r["Label"],
+                "Market":     r["Market"],
+                "Price":      fmt(r["Price"]),
+                "Threshold":  f"{r['Min Votes']}/8",
+                "Buy Votes":  r["Buy Votes"],
+                "Strategy %": fmt(r["Net %"],"%"),
+                "B&H %":      fmt(r["B&H %"],"%"),
+                "Win Rate":   fmt(r["Win Rate"],"%"),
+                "Trades":     r["Trades"],
+                "End Value":  fmt(r["End Value"]),
+            } for r in buy_bt]), use_container_width=True, hide_index=True)
+
+        # Full leaderboard
+        st.markdown("### Full Bot Leaderboard")
+        mf = st.radio("Filter:", ["All","US","India","Crypto","Commodity"],
+                       horizontal=True, key="bot_bt_mkt")
+        fd = bot_rows if mf=="All" else [r for r in bot_rows if r["Market"]==mf]
+
+        if fd:
+            st.dataframe(pd.DataFrame([{
+                "Asset":       r["Label"],
+                "Market":      r["Market"],
+                "Price":       fmt(r["Price"]),
+                "Signal":      r["Signal"],
+                "Threshold":   f"{r['Min Votes']}/8",
+                "Buy Votes":   r["Buy Votes"],
+                "Sell Votes":  r["Sell Votes"],
+                "Strategy %":  fmt(r["Net %"],"%"),
+                "B&H %":       fmt(r["B&H %"],"%"),
+                "Win Rate":    fmt(r["Win Rate"],"%"),
+                "Trades":      r["Trades"],
+                "End Value":   fmt(r["End Value"]),
+            } for r in fd]).style.map(sig_color, subset=["Signal"]),
+            use_container_width=True, hide_index=True)
+
+        # Trade log for selected asset
+        st.markdown("### Bot Trade Log")
+        asset_choices = [r["Ticker"] for r in fd] if fd else []
+        if asset_choices:
+            sel_bot = st.selectbox("Select asset to view trades:",
+                asset_choices, format_func=ticker_label, key="bot_bt_sel")
+            sel_bot_row = next((r for r in fd if r["Ticker"]==sel_bot), None)
+            if sel_bot_row:
+                m1,m2,m3,m4,m5 = st.columns(5)
+                sc = "#3fb950" if sel_bot_row["Signal"]=="BUY" else "#f85149" if sel_bot_row["Signal"]=="SELL" else "#e3b341"
+                m1.markdown(f"**Signal**<br><span style='color:{sc};font-size:18px;font-weight:bold'>{sel_bot_row['Signal']}</span>", unsafe_allow_html=True)
+                m2.metric("Strategy",  fmt(sel_bot_row["Net %"],"%"))
+                m3.metric("B&H",       fmt(sel_bot_row["B&H %"],"%"))
+                m4.metric("Win Rate",  fmt(sel_bot_row["Win Rate"],"%"))
+                m5.metric("End Value", fmt(sel_bot_row["End Value"]))
+
+                # Chart
+                dfv = sel_bot_row["_df"]
+                fig = go.Figure()
+                try:
+                    fig.add_trace(go.Scatter(x=dfv.index, y=dfv["Close"], name="Price", line=dict(color="white",width=1.5)))
+                    log_t = sel_bot_row["_log"]
+                    bd=[t["Entry Date"] for t in log_t]; bp=[t["Entry Price"] for t in log_t]
+                    sd=[t["Exit Date"] for t in log_t if t["Status"]=="CLOSED"]
+                    sp=[t["Exit Price"] for t in log_t if t["Status"]=="CLOSED"]
+                    if bd: fig.add_trace(go.Scatter(x=bd,y=bp,mode="markers",name="BUY", marker=dict(symbol="triangle-up",  color="lime",size=10)))
+                    if sd: fig.add_trace(go.Scatter(x=sd,y=sp,mode="markers",name="SELL",marker=dict(symbol="triangle-down",color="red", size=10)))
+                except Exception: pass
+                fig.update_layout(template="plotly_dark",height=400,margin=dict(l=20,r=20,t=30,b=20),
+                                   legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Trade log table
+                if sel_bot_row["_log"]:
+                    ldf = pd.DataFrame(sel_bot_row["_log"])
+                    def cr2(v):
+                        try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
+                        except: return ""
+                    def cs3(v):
+                        if v=="OPEN":   return "color:#3fb950;font-weight:bold"
+                        if v=="CLOSED": return "color:#8b949e"
+                        return ""
+                    st.dataframe(ldf.style.map(cr2,subset=["Return %"]).map(cs3,subset=["Status"]),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.info("No trades triggered for this asset in this period.")
+
 # ═══════════════════════════════════════════════════════════════
 # TAB 2 — PAPER TRADING BOT
 # ═══════════════════════════════════════════════════════════════
@@ -729,9 +947,20 @@ with tab_bot:
 
             st.markdown("---")
             st.markdown("### Bot Settings")
-            s1, s2 = st.columns(2)
-            with s1: bot_cap_pct = st.slider("Capital % per trade", 5, 25, 10, key="bot_cap")
-            with s2: max_pos     = st.slider("Max open positions",  1, 10,  5, key="max_pos")
+            s1, s2, s3 = st.columns(3)
+            with s1:
+                trade_mode = st.radio("Trade Size Mode", ["Fixed $", "% of Portfolio"], key="trade_mode", horizontal=True)
+            with s2:
+                if trade_mode == "Fixed $":
+                    fixed_amt = st.number_input("Amount per trade ($)", min_value=10, max_value=10000, value=500, step=50, key="fixed_amt")
+                else:
+                    bot_cap_pct = st.slider("Capital % per trade", 1, 25, 2, key="bot_cap")
+            with s3:
+                max_pos = st.slider("Max open positions", 1, 10, 5, key="max_pos")
+
+            allow_short = st.toggle("Allow Short Selling (SELL signal opens short position)", value=False, key="allow_short")
+            if allow_short:
+                st.warning("Short selling enabled — bot will SELL short when strategies signal SELL. Make sure your Alpaca account allows shorting.")
 
             st.markdown("**Strategy → Timeframe mapping:**")
             tf_df = pd.DataFrame([{"Strategy":s,"Best Timeframe":STRATEGY_TF[s]} for s in STRATEGIES])
@@ -795,14 +1024,33 @@ with tab_bot:
 
                         if buy_v >= min_v and buy_v > sell_v:
                             status = "BUY"
-                            if not already_in and len(positions) < max_pos:
+                            # Check if we have a short position to close first
+                            pos_qty = positions.get(ticker, 0)
+                            if pos_qty < 0:
+                                # Close short position
                                 try:
-                                    qty_usd = port_val * (bot_cap_pct/100)
+                                    bot_client.close_position(ticker)
+                                    action = "CLOSED SHORT"
+                                    st.session_state.bot_log.append({
+                                        "Time":   datetime.now().strftime("%H:%M:%S"),
+                                        "Asset":  ticker_label(ticker),
+                                        "Action": "CLOSE SHORT",
+                                        "Price":  round(price,2),
+                                        "Amount": "full short",
+                                        "Votes":  f"{buy_v}/8",
+                                        "Threshold": f"{min_v}/8"})
+                                except Exception as e: action=f"Close short failed:{e}"
+                            elif not already_in and len(positions) < max_pos:
+                                try:
+                                    if trade_mode == "Fixed $":
+                                        qty_usd = float(fixed_amt)
+                                    else:
+                                        qty_usd = port_val * (bot_cap_pct/100)
                                     bot_client.submit_order(MarketOrderRequest(
                                         symbol=ticker, notional=round(qty_usd,2),
                                         side=OrderSide.BUY, time_in_force=TimeInForce.DAY))
                                     action = f"BOUGHT ${qty_usd:.0f}"
-                                    positions[ticker] = 1  # mark locally to prevent re-buy this scan
+                                    positions[ticker] = 1
                                     st.session_state.bot_log.append({
                                         "Time":   datetime.now().strftime("%H:%M:%S"),
                                         "Asset":  ticker_label(ticker),
@@ -818,19 +1066,48 @@ with tab_bot:
                         elif sell_v >= min_v and sell_v > buy_v:
                             status = "SELL"
                             if ticker in positions:
+                                pos_qty = positions[ticker]
+                                if pos_qty > 0:
+                                    # Close existing long position
+                                    try:
+                                        bot_client.close_position(ticker)
+                                        action = "CLOSED LONG"
+                                        st.session_state.bot_log.append({
+                                            "Time":   datetime.now().strftime("%H:%M:%S"),
+                                            "Asset":  ticker_label(ticker),
+                                            "Action": "CLOSE LONG",
+                                            "Price":  round(price,2),
+                                            "Amount": "full position",
+                                            "Votes":  f"{sell_v}/8",
+                                            "Threshold": f"{min_v}/8"})
+                                    except Exception as e: action=f"Close failed:{e}"
+                                else:
+                                    action = "Already short"
+                            elif allow_short and ticker not in pending and len(positions) < max_pos:
+                                # Open new short position
                                 try:
-                                    bot_client.close_position(ticker)
-                                    action = "SOLD"
+                                    if trade_mode == "Fixed $":
+                                        qty_usd = float(fixed_amt)
+                                    else:
+                                        qty_usd = port_val * (bot_cap_pct/100)
+                                    bot_client.submit_order(MarketOrderRequest(
+                                        symbol=ticker,
+                                        notional=round(qty_usd,2),
+                                        side=OrderSide.SELL,
+                                        time_in_force=TimeInForce.DAY))
+                                    action = f"SHORT SOLD ${qty_usd:.0f}"
+                                    positions[ticker] = -1
                                     st.session_state.bot_log.append({
                                         "Time":   datetime.now().strftime("%H:%M:%S"),
                                         "Asset":  ticker_label(ticker),
-                                        "Action": "SELL",
+                                        "Action": "SHORT SELL",
                                         "Price":  round(price,2),
-                                        "Amount": "full",
+                                        "Amount": f"${qty_usd:.0f}",
                                         "Votes":  f"{sell_v}/8",
                                         "Threshold": f"{min_v}/8"})
-                                except Exception as e: action=f"Failed:{e}"
-                            else: action="No position"
+                                except Exception as e: action=f"Short failed:{e}"
+                            else:
+                                action = "No long to close" if not allow_short else "No position / pending"
 
                         rows.append({
                             "Asset":      ticker_label(ticker),
@@ -862,60 +1139,56 @@ with tab_bot:
                         try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
                         except: return ""
                     st.dataframe(pd.DataFrame([{
-                        "Asset":    p.symbol,"Qty":float(p.qty),
-                        "Avg":      float(p.avg_entry_price),
-                        "Current":  float(p.current_price),
-                        "P&L $":    round(float(p.unrealized_pl),2),
-                        "P&L %":    round(float(p.unrealized_plpc)*100,2)
-                    } for p in pos_list]).style.map(plc,subset=["P&L $","P&L %"]),
+                        "Asset":   p.symbol,
+                        "Qty":     float(p.qty),
+                        "Avg":     float(p.avg_entry_price),
+                        "Current": float(p.current_price),
+                        "P&L $":   round(float(p.unrealized_pl),2),
+                        "P&L %":   round(float(p.unrealized_plpc)*100,2)
+                    } for p in pos_list]).style.map(plc, subset=["P&L $","P&L %"]),
                     use_container_width=True, hide_index=True)
 
-                    pc1, pc2 = st.columns(2)
-                    with pc1:
-                        if st.button("Close ALL Positions", type="primary", use_container_width=True):
-                            bot_client.close_all_positions(cancel_orders=True)
-                            st.success("All positions closed!"); st.rerun()
-                    with pc2:
-                        close_sym = st.selectbox("Close individual position",
-                            ["—"] + [p.symbol for p in pos_list], key="close_sym")
-                        if close_sym != "—":
-                            if st.button(f"Close {close_sym}", use_container_width=True):
-                                bot_client.close_position(close_sym)
-                                st.success(f"{close_sym} closed!"); st.rerun()
+                    st.markdown("**Close individual position:**")
+                    for p in pos_list:
+                        c1, c2, c3 = st.columns([2, 2, 1])
+                        pnl = round(float(p.unrealized_pl), 2)
+                        c1.markdown(f"**{p.symbol}**")
+                        c2.markdown(f"P&L: {'🟢' if pnl>=0 else '🔴'} ${pnl:+.2f}")
+                        if c3.button("Close", key=f"close_pos_{p.symbol}", use_container_width=True):
+                            bot_client.close_position(p.symbol)
+                            st.success(f"{p.symbol} closed!"); st.rerun()
+
+                    st.markdown("---")
+                    if st.button("🔴 Close ALL Positions", type="primary", use_container_width=True):
+                        bot_client.close_all_positions(cancel_orders=True)
+                        st.success("All positions closed!"); st.rerun()
                 else:
                     st.info("No open positions.")
-            except Exception as e: st.error(f"Error: {e}")
+            except Exception as e:
+                st.error(f"Positions error: {e}")
 
             st.markdown("---")
             st.subheader("Pending Orders")
             try:
                 open_orders = bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
                 if open_orders:
-                    st.dataframe(pd.DataFrame([{
-                        "Time":   o.created_at.strftime("%H:%M:%S"),
-                        "Ticker": o.symbol,
-                        "Side":   o.side.value.upper(),
-                        "Amount": o.notional or o.qty,
-                        "Status": o.status.value,
-                    } for o in open_orders]), use_container_width=True, hide_index=True)
+                    st.markdown("**Cancel individual order:**")
+                    for o in open_orders:
+                        c1, c2, c3 = st.columns([2, 2, 1])
+                        c1.markdown(f"**{o.symbol}**")
+                        c2.markdown(f"{o.side.value.upper()} ${o.notional or o.qty}")
+                        if c3.button("Cancel", key=f"cancel_ord_{o.id}", use_container_width=True):
+                            bot_client.cancel_order_by_id(o.id)
+                            st.success(f"{o.symbol} order cancelled!"); st.rerun()
 
-                    oc1, oc2 = st.columns(2)
-                    with oc1:
-                        if st.button("Cancel ALL Pending Orders", use_container_width=True):
-                            bot_client.cancel_orders()
-                            st.success("All pending orders cancelled!"); st.rerun()
-                    with oc2:
-                        cancel_sym = st.selectbox("Cancel specific order",
-                            ["—"] + [o.symbol for o in open_orders], key="cancel_sym")
-                        if cancel_sym != "—":
-                            if st.button(f"Cancel {cancel_sym} order", use_container_width=True):
-                                for o in open_orders:
-                                    if o.symbol == cancel_sym:
-                                        bot_client.cancel_order_by_id(o.id)
-                                st.success(f"{cancel_sym} order cancelled!"); st.rerun()
+                    st.markdown("---")
+                    if st.button("Cancel ALL Pending Orders", use_container_width=True):
+                        bot_client.cancel_orders()
+                        st.success("All pending orders cancelled!"); st.rerun()
                 else:
                     st.info("No pending orders.")
-            except Exception as e: st.error(f"Pending orders error: {e}")
+            except Exception as e:
+                st.error(f"Pending orders error: {e}")
 
             st.markdown("---")
             st.subheader("Bot Trade Log")
