@@ -21,6 +21,16 @@ except ImportError:
 DEFAULT_US = ["AAPL","MSFT","NVDA","GOOGL","META","AMZN","TSLA","AMD","NFLX","V","JPM","MS"]
 DEFAULT_IN = ["RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS","WIPRO.NS","BAJFINANCE.NS","SBIN.NS","LT.NS","TATAMOTORS.NS"]
 DEFAULT_CR = ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD","ADA-USD","DOGE-USD"]
+DEFAULT_CM = ["GC=F","SI=F","CL=F","NG=F","HG=F","PL=F"]  # Gold, Silver, Oil, Gas, Copper, Platinum
+
+COMMODITY_NAMES = {
+    "GC=F": "Gold",
+    "SI=F": "Silver",
+    "CL=F": "Crude Oil",
+    "NG=F": "Natural Gas",
+    "HG=F": "Copper",
+    "PL=F": "Platinum",
+}
 
 if "results"   not in st.session_state: st.session_state.results   = {}
 if "run_label" not in st.session_state: st.session_state.run_label = ""
@@ -63,7 +73,14 @@ with tab_bt:
     run_us  = st.sidebar.button("Run US Stocks",     type="primary", use_container_width=True)
     run_in  = st.sidebar.button("Run Indian Stocks", type="primary", use_container_width=True)
     run_cr  = st.sidebar.button("Run Crypto",        type="primary", use_container_width=True)
+    run_cm  = st.sidebar.button("Run Commodities",   type="primary", use_container_width=True)
     run_all = st.sidebar.button("Run ALL Markets",   use_container_width=True)
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Bot Backtest")
+    st.sidebar.caption("Backtest using multi-strategy consensus (same logic as the bot)")
+    bot_min_bt   = st.sidebar.slider("Min votes for bot backtest", 3, 7, 4, key="bot_min_bt")
+    run_bot_bt   = st.sidebar.button("Run Bot Consensus Backtest", use_container_width=True, key="run_bot_bt")
 
     # ── INDICATORS ──────────────────────────────────────────────
     def compute_sma(s, w):    return s.rolling(w).mean()
@@ -266,7 +283,130 @@ with tab_bt:
         except Exception:
             return None
 
-    def run_engine(tickers, strategy, periods, capital):
+    def get_market(ticker):
+        if ticker.endswith(".NS"):    return "India"
+        if ticker.endswith("-USD"):   return "Crypto"
+        if ticker.endswith("=F"):     return "Commodity"
+        return "US"
+
+    def ticker_label(ticker):
+        if ticker in COMMODITY_NAMES: return COMMODITY_NAMES[ticker]
+        return ticker.replace(".NS","").replace("-USD","")
+
+    # Multi-strategy consensus signal (same logic as bot)
+    def get_consensus_signal(df, min_votes=4):
+        buy_v, sell_v = 0, 0
+        for strat in STRATEGIES:
+            try:
+                e = generate_signals(df.copy(), strat)
+                s = int(e["Signal"].iloc[-1])
+                buy_v  += 1 if s ==  1 else 0
+                sell_v += 1 if s == -1 else 0
+            except Exception:
+                pass
+        if buy_v >= min_votes and buy_v > sell_v:   return 1,  buy_v, sell_v
+        if sell_v >= min_votes and sell_v > buy_v:  return -1, buy_v, sell_v
+        return 0, buy_v, sell_v
+
+    # Bot consensus backtest — uses rolling consensus of all 7 strategies
+    def run_bot_backtest(df, capital, min_votes=4):
+        closes  = df["Close"].values
+        dates   = df.index
+        n       = len(df)
+
+        # Pre-compute all strategy signals
+        all_sigs = []
+        for strat in STRATEGIES:
+            try:
+                e = generate_signals(df.copy(), strat)
+                all_sigs.append(e["Signal"].values)
+            except Exception:
+                all_sigs.append(np.zeros(n))
+
+        log, in_pos, entry, portfolio, wins, total = [], False, 0.0, float(capital), 0, 0
+        entry_date = ""
+
+        for i in range(n):
+            price = closes[i]
+            if price is None or (isinstance(price, float) and np.isnan(price)):
+                continue
+            price = float(price)
+            date  = dates[i].strftime("%Y-%m-%d")
+
+            buy_v  = sum(1 for s in all_sigs if i < len(s) and s[i] ==  1)
+            sell_v = sum(1 for s in all_sigs if i < len(s) and s[i] == -1)
+
+            sig = 1 if (buy_v >= min_votes and buy_v > sell_v) else \
+                 -1 if (sell_v >= min_votes and sell_v > buy_v) else 0
+
+            if sig == 1 and not in_pos:
+                in_pos, entry, entry_date, total = True, price, date, total + 1
+            elif sig == -1 and in_pos:
+                in_pos = False
+                ret = (price - entry) / entry
+                portfolio *= (1 + ret)
+                if price > entry: wins += 1
+                log.append({"Status":"CLOSED","Entry Date":entry_date,
+                             "Entry Price":round(entry,4),"Exit Date":date,
+                             "Exit Price":round(price,4),"Return %":round(ret*100,2),
+                             "Portfolio":round(portfolio,2),
+                             "Buy Votes":buy_v,"Sell Votes":sell_v})
+
+        if in_pos:
+            last_v = next((closes[i] for i in range(n-1,-1,-1)
+                           if closes[i] is not None and not (isinstance(closes[i],float) and np.isnan(closes[i]))), entry)
+            price = float(last_v)
+            ret   = (price - entry) / entry
+            portfolio *= (1 + ret)
+            if price > entry: wins += 1
+            log.append({"Status":"OPEN","Entry Date":entry_date,
+                         "Entry Price":round(entry,4),"Exit Date":"Present",
+                         "Exit Price":round(price,4),"Return %":round(ret*100,2),
+                         "Portfolio":round(portfolio,2),
+                         "Buy Votes":buy_v,"Sell Votes":sell_v})
+
+        win_rate   = wins/total*100 if total > 0 else 0.0
+        last_price = float(next((closes[i] for i in range(n-1,-1,-1)
+                                  if closes[i] is not None and not (isinstance(closes[i],float) and np.isnan(closes[i]))), 0))
+        valid = df[df["Close"].notna()]
+        first_cl = float(valid["Close"].iloc[0]) if not valid.empty else last_price
+        bh_pct   = round((last_price/first_cl-1)*100,2) if first_cl > 0 else 0.0
+        net_pct  = round((portfolio/capital-1)*100,2)
+
+        return {"net_pct":net_pct,"bh_pct":bh_pct,"end_val":round(portfolio,2),
+                "win_rate":round(win_rate,1),"trades":total,"log":log,
+                "last_price":last_price,
+                "last_buy_v":buy_v,"last_sell_v":sell_v,
+                "last_sig": 1 if buy_v>=min_votes and buy_v>sell_v else -1 if sell_v>=min_votes and sell_v>buy_v else 0}
+
+    def process_bot_ticker(ticker, periods, capital, min_votes):
+        try:
+            max_days = max(periods.values()) + 250
+            end_dt   = datetime.now()
+            start_dt = end_dt - timedelta(days=max_days)
+            raw = yf.download(ticker, start=start_dt, end=end_dt, progress=False, auto_adjust=True, group_by="column")
+            if raw is None or raw.empty: return None
+            raw = clean_df(raw)
+            if "Close" not in raw.columns or len(raw) < 60: return None
+            mkt = get_market(ticker)
+            result = {}
+            for label, days in periods.items():
+                cutoff   = end_dt - timedelta(days=days)
+                slice_df = raw[raw.index >= pd.to_datetime(cutoff)].copy()
+                if len(slice_df) < 50: continue
+                bt = run_bot_backtest(slice_df, capital, min_votes)
+                sig_txt = "BUY" if bt["last_sig"]==1 else "SELL" if bt["last_sig"]==-1 else "HOLD"
+                result[label] = {
+                    "Ticker":ticker,"Market":mkt,"Label":ticker_label(ticker),
+                    "Price":bt["last_price"],"Signal":sig_txt,
+                    "Buy Votes":bt["last_buy_v"],"Sell Votes":bt["last_sell_v"],
+                    "Net %":bt["net_pct"],"B&H %":bt["bh_pct"],
+                    "Win Rate":bt["win_rate"],"Trades":bt["trades"],
+                    "End Value":bt["end_val"],"_log":bt["log"],"_df":slice_df,
+                }
+            return result if result else None
+        except Exception:
+            return None
         results = {p: [] for p in periods}
         prog    = st.progress(0)
         status  = st.empty()
@@ -348,18 +488,45 @@ with tab_bt:
         with st.spinner("Running US Stocks..."):
             st.session_state.results   = run_engine(DEFAULT_US, strategy_name, selected_periods, capital)
             st.session_state.run_label = "US Stocks"
+            st.session_state.bot_bt    = {}
     elif run_in and selected_periods:
         with st.spinner("Running Indian Stocks..."):
             st.session_state.results   = run_engine(DEFAULT_IN, strategy_name, selected_periods, capital)
             st.session_state.run_label = "Indian Stocks"
+            st.session_state.bot_bt    = {}
     elif run_cr and selected_periods:
         with st.spinner("Running Crypto..."):
             st.session_state.results   = run_engine(DEFAULT_CR, strategy_name, selected_periods, capital)
             st.session_state.run_label = "Crypto"
+            st.session_state.bot_bt    = {}
+    elif run_cm and selected_periods:
+        with st.spinner("Running Commodities (Gold, Silver, Oil...)..."):
+            st.session_state.results   = run_engine(DEFAULT_CM, strategy_name, selected_periods, capital)
+            st.session_state.run_label = "Commodities"
+            st.session_state.bot_bt    = {}
     elif run_all and selected_periods:
         with st.spinner("Running ALL Markets..."):
-            st.session_state.results   = run_engine(DEFAULT_US+DEFAULT_IN+DEFAULT_CR, strategy_name, selected_periods, capital)
+            st.session_state.results   = run_engine(DEFAULT_US+DEFAULT_IN+DEFAULT_CR+DEFAULT_CM, strategy_name, selected_periods, capital)
             st.session_state.run_label = "All Markets"
+            st.session_state.bot_bt    = {}
+    elif run_bot_bt and selected_periods:
+        with st.spinner("Running Bot Consensus Backtest across all markets..."):
+            all_tickers = DEFAULT_US + DEFAULT_IN + DEFAULT_CR + DEFAULT_CM
+            bot_results = {p: [] for p in selected_periods}
+            prog   = st.progress(0)
+            status = st.empty()
+            for idx, ticker in enumerate(all_tickers):
+                prog.progress((idx+1)/len(all_tickers))
+                status.caption(f"Bot backtest: {ticker_label(ticker)} ({idx+1}/{len(all_tickers)})...")
+                rows = process_bot_ticker(ticker, selected_periods, capital, bot_min_bt)
+                if rows:
+                    for label, row in rows.items():
+                        bot_results[label].append(row)
+            prog.empty(); status.empty()
+            for label in bot_results:
+                bot_results[label].sort(key=lambda x: x["Net %"] if x["Net %"] is not None and not (isinstance(x["Net %"],float) and np.isnan(x["Net %"])) else -999, reverse=True)
+            st.session_state.bot_bt    = bot_results
+            st.session_state.run_label = f"Bot Consensus ({bot_min_bt}/7 votes)"
 
     # ── DISPLAY ─────────────────────────────────────────────────
     if st.session_state.results:
@@ -530,6 +697,98 @@ with tab_bt:
     else:
         st.info("Select a strategy and click a Run button in the sidebar to start.")
 
+    # ── BOT CONSENSUS BACKTEST RESULTS ──────────────────────────
+    if st.session_state.get("bot_bt"):
+        bot_bt    = st.session_state.bot_bt
+        run_label = st.session_state.run_label
+        st.markdown("---")
+        st.markdown(f"## Bot Consensus Backtest — {run_label}")
+        st.caption("Uses all 7 strategies simultaneously. BUY when N+ strategies agree. Same logic the live bot uses.")
+
+        avail = [p for p in bot_bt if bot_bt[p]]
+        if not avail:
+            st.error("No results.")
+        else:
+            btabs = st.tabs(avail)
+            for btab, plabel in zip(btabs, avail):
+                with btab:
+                    pdata = bot_bt[plabel]
+                    buys  = [r for r in pdata if r["Signal"]=="BUY"]
+                    sells = [r for r in pdata if r["Signal"]=="SELL"]
+                    holds = [r for r in pdata if r["Signal"]=="HOLD"]
+
+                    # Signal summary
+                    b1,b2,b3 = st.columns(3)
+                    b1.success(f"🟢 BUY — {len(buys)} assets")
+                    b2.error(  f"🔴 SELL — {len(sells)} assets")
+                    b3.info(   f"⚪ HOLD — {len(holds)} assets")
+
+                    # BUY list
+                    if buys:
+                        st.markdown("**BUY Signals:**")
+                        st.dataframe(pd.DataFrame([{
+                            "Asset":     r["Label"],
+                            "Market":    r["Market"],
+                            "Price":     fmt(r["Price"]),
+                            "Buy Votes": r["Buy Votes"],
+                            "Strategy %":fmt(r["Net %"],"%"),
+                            "B&H %":     fmt(r["B&H %"],"%"),
+                            "Win Rate":  fmt(r["Win Rate"],"%"),
+                            "Trades":    r["Trades"],
+                        } for r in buys]), use_container_width=True, hide_index=True)
+
+                    # Full leaderboard
+                    st.markdown("**Full Bot Leaderboard:**")
+                    mf = st.radio("Filter:", ["All","US","India","Crypto","Commodity"],
+                                   horizontal=True, key=f"botmkt_{plabel}")
+                    fd = pdata if mf=="All" else [r for r in pdata if r["Market"]==mf]
+
+                    def bsig(v):
+                        if v=="BUY":  return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
+                        if v=="SELL": return "background-color:#3a1a1a;color:#f85149;font-weight:bold"
+                        if v=="HOLD": return "color:#e3b341"
+                        return ""
+
+                    if fd:
+                        st.dataframe(pd.DataFrame([{
+                            "Asset":      r["Label"],
+                            "Market":     r["Market"],
+                            "Price":      fmt(r["Price"]),
+                            "Signal":     r["Signal"],
+                            "Buy Votes":  r["Buy Votes"],
+                            "Sell Votes": r["Sell Votes"],
+                            "Strategy %": fmt(r["Net %"],"%"),
+                            "B&H %":      fmt(r["B&H %"],"%"),
+                            "Win Rate":   fmt(r["Win Rate"],"%"),
+                            "Trades":     r["Trades"],
+                            "End Value":  fmt(r["End Value"]),
+                        } for r in fd]).style.map(bsig, subset=["Signal"]),
+                        use_container_width=True, hide_index=True)
+
+                    # Trade log for selected asset
+                    st.markdown("---")
+                    st.subheader("Trade Log")
+                    asset_choices = [r["Ticker"] for r in fd]
+                    if asset_choices:
+                        sel_a = st.selectbox("Select asset:",
+                            asset_choices,
+                            format_func=ticker_label,
+                            key=f"botsel_{plabel}")
+                        sel_row = next((r for r in fd if r["Ticker"]==sel_a), None)
+                        if sel_row and sel_row["_log"]:
+                            ldf = pd.DataFrame(sel_row["_log"])
+                            def cr2(v):
+                                try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
+                                except: return ""
+                            def cs3(v):
+                                if v=="OPEN":   return "color:#3fb950;font-weight:bold"
+                                if v=="CLOSED": return "color:#8b949e"
+                                return ""
+                            st.dataframe(ldf.style.map(cr2, subset=["Return %"]).map(cs3, subset=["Status"]),
+                                         use_container_width=True, hide_index=True)
+                        else:
+                            st.info("No trades for this asset in this period.")
+
 
 # ═══════════════════════════════════════════════════════════════
 # TAB 2 — PAPER TRADING BOT
@@ -588,12 +847,47 @@ with tab_bot:
             with s3:
                 bot_cap_pct = st.slider("Capital % per trade", 5, 25, 10, key="bot_cap")
 
-            bot_tickers = st.multiselect("Stocks to scan", DEFAULT_US, default=["AAPL","NVDA","MSFT","GOOGL","AMD"], key="bot_tickers")
+            bot_tickers = st.multiselect(
+                "Assets to scan",
+                DEFAULT_US + DEFAULT_CR + DEFAULT_CM,
+                default=["AAPL","NVDA","MSFT","BTC-USD","GC=F","CL=F"],
+                format_func=ticker_label,
+                key="bot_tickers"
+            )
 
             st.markdown("---")
 
-            # Scan & Trade button
-            scan_btn = st.button("🔍 Scan Signals & Execute Trades", type="primary", use_container_width=True)
+            # Auto-run settings
+            st.markdown("### Auto Trading")
+            c1, c2 = st.columns(2)
+            with c1:
+                auto_trade = st.toggle("Enable Auto Trading", value=False, key="auto_trade")
+            with c2:
+                scan_interval = st.selectbox("Scan every", ["5 mins","15 mins","30 mins","1 hour"], key="scan_interval")
+
+            interval_map = {"5 mins":300,"15 mins":900,"30 mins":1800,"1 hour":3600}
+            interval_sec = interval_map[scan_interval]
+
+            if auto_trade:
+                st.success(f"Auto trading ON — scanning every {scan_interval}")
+                import streamlit.components.v1 as components
+                components.html(
+                    f"""
+                    <script>
+                    setTimeout(function() {{
+                        window.parent.document.querySelector('[data-testid="stApp"]').scrollTo(0,0);
+                        window.location.reload();
+                    }}, {interval_sec * 1000});
+                    </script>
+                    """,
+                    height=0
+                )
+                # Auto-trigger scan
+                scan_btn = True
+                st.info(f"Next auto-scan in {scan_interval}. Keep this tab open on your phone.")
+            else:
+                st.warning("Auto trading OFF — tap button below to scan manually.")
+                scan_btn = st.button("🔍 Scan Signals & Execute Trades Now", type="primary", use_container_width=True)
 
             if scan_btn and bot_tickers:
                 positions  = {p.symbol: float(p.qty) for p in bot_client.get_all_positions()}
