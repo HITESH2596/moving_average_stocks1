@@ -626,8 +626,10 @@ with tab_bt:
 
     def do_run(tickers, label):
         with st.spinner(f"Running {label}..."):
-            st.session_state.bt_results = run_engine(tickers, strategy_name, bt_days, capital, interval)
+            res = run_engine(tickers, strategy_name, bt_days, capital, interval)
+            st.session_state.bt_results = res
             st.session_state.bt_label   = f"{label} · {strategy_name} · {tf_label} · {period_label}"
+            st.rerun()
 
     if run_us:  do_run(DEFAULT_US, "US Stocks")
     elif run_in: do_run(DEFAULT_IN, "Indian Stocks")
@@ -636,9 +638,9 @@ with tab_bt:
     elif run_all: do_run(DEFAULT_US+DEFAULT_IN+DEFAULT_CR+DEFAULT_CM, "All Markets")
 
     # RESULTS
-    results = st.session_state.bt_results
+    results = st.session_state.get("bt_results", [])
     if results:
-        st.markdown(f"## {st.session_state.bt_label}")
+        st.markdown(f"## {st.session_state.get('bt_label','Results')}")
 
         buy_stocks  = [r for r in results if r["Signal"]=="BUY"]
         sell_stocks = [r for r in results if r["Signal"]=="SELL"]
@@ -1084,25 +1086,30 @@ with tab_bot:
                                 else:
                                     action = "Already short"
                             elif allow_short and mkt == "US" and ticker not in pending and len(positions) < max_pos:
-                                # Only short US stocks
+                                # Short sell — use qty not notional (Alpaca requirement for shorts)
                                 try:
                                     if trade_mode == "Fixed $":
                                         qty_usd = float(fixed_amt)
                                     else:
                                         qty_usd = port_val * (bot_cap_pct/100)
+                                    # Calculate shares to short based on current price
+                                    if price > 0:
+                                        shares = max(1, int(qty_usd / price))
+                                    else:
+                                        shares = 1
                                     bot_client.submit_order(MarketOrderRequest(
                                         symbol=ticker,
-                                        notional=round(qty_usd,2),
+                                        qty=shares,
                                         side=OrderSide.SELL,
                                         time_in_force=TimeInForce.DAY))
-                                    action = f"SHORT ${qty_usd:.0f}"
+                                    action = f"SHORT {shares} shares (~${shares*price:.0f})"
                                     positions[ticker] = -1
                                     st.session_state.bot_log.append({
                                         "Time":   datetime.now().strftime("%H:%M:%S"),
                                         "Asset":  ticker_label(ticker),
                                         "Action": "SHORT SELL",
                                         "Price":  round(price,2),
-                                        "Amount": f"${qty_usd:.0f}",
+                                        "Amount": f"{shares} shares",
                                         "Votes":  f"{sell_v}/8",
                                         "Threshold": f"{min_v}/8"})
                                 except Exception as e: action=f"Short failed:{e}"
