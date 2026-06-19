@@ -780,7 +780,7 @@ with tab_bot:
         st.code("alpaca-py", language="text")
         st.stop()
 
-    # Load keys from secrets, allow manual override
+    # Load keys from Streamlit secrets or manual input
     default_key    = st.secrets.get("ALPACA_KEY",    "")
     default_secret = st.secrets.get("ALPACA_SECRET", "")
 
@@ -790,140 +790,229 @@ with tab_bot:
         api_secret = default_secret
     else:
         b1, b2 = st.columns(2)
-        with b1: api_key    = st.text_input("Alpaca API Key",    type="password", key="bot_api_key")
-        with b2: api_secret = st.text_input("Alpaca API Secret", type="password", key="bot_api_secret")
+        with b1:
+            api_key    = st.text_input("Alpaca API Key",    type="password", key="bot_api_key")
+        with b2:
+            api_secret = st.text_input("Alpaca API Secret", type="password", key="bot_api_secret")
 
     if not api_key or not api_secret:
         st.info("Enter Alpaca keys above or save them in Streamlit Secrets.")
-        st.stop()
-    try:
-        bot_client = TradingClient(api_key, api_secret, paper=True)
+        st.markdown("""
+        1. Go to [alpaca.markets](https://alpaca.markets) — sign up free
+        2. Paper Trading → API Keys → Generate New Key
+        3. Paste keys above **or** go to Streamlit → Manage App → Secrets and add:
+        ```
+        ALPACA_KEY = "your_key"
+        ALPACA_SECRET = "your_secret"
+        ```
+        """)
+    else:
+        try:
+            bot_client = TradingClient(api_key, api_secret, paper=True)
             acct       = bot_client.get_account()
+
             st.markdown("### Account")
-            a1,a2,a3,a4=st.columns(4)
-            a1.metric("Portfolio",   f"${float(acct.portfolio_value):,.0f}")
-            a2.metric("Cash",        f"${float(acct.cash):,.0f}")
-            a3.metric("P&L Today",   f"${float(acct.equity)-float(acct.last_equity):+,.0f}")
-            a4.metric("Buying Power",f"${float(acct.buying_power):,.0f}")
+            a1, a2, a3, a4 = st.columns(4)
+            a1.metric("Portfolio",    f"${float(acct.portfolio_value):,.0f}")
+            a2.metric("Cash",         f"${float(acct.cash):,.0f}")
+            a3.metric("P&L Today",    f"${float(acct.equity)-float(acct.last_equity):+,.0f}")
+            a4.metric("Buying Power", f"${float(acct.buying_power):,.0f}")
 
             st.markdown("---")
             st.markdown("### Bot Settings")
-            s1,s2=st.columns(2)
-            with s1: bot_cap_pct=st.slider("Capital % per trade",5,25,10,key="bot_cap")
-            with s2: max_pos    =st.slider("Max open positions",1,10,5,key="max_pos")
+            s1, s2 = st.columns(2)
+            with s1:
+                bot_cap_pct = st.slider("Capital % per trade", 5, 25, 10, key="bot_cap")
+            with s2:
+                max_pos = st.slider("Max open positions", 1, 10, 5, key="max_pos")
+
             st.info("**Thresholds:** 🇺🇸 US=5/8 · 🇮🇳 India=4/8 · 🪙 Crypto=3/8 · 🛢️ Commodities=4/8 · Timeframe: 4H")
 
-            bot_tickers=st.multiselect("Assets to scan",
-                DEFAULT_US+DEFAULT_CR+DEFAULT_CM,
+            bot_tickers = st.multiselect(
+                "Assets to scan",
+                DEFAULT_US + DEFAULT_CR + DEFAULT_CM,
                 default=["AAPL","NVDA","MSFT","BTC-USD","GC=F","CL=F"],
-                format_func=ticker_label, key="bot_tickers")
+                format_func=ticker_label,
+                key="bot_tickers"
+            )
 
             st.markdown("---")
-            c1,c2=st.columns(2)
-            with c1: auto_trade    = st.toggle("Enable Auto Trading",value=False,key="auto_trade")
-            with c2: scan_interval = st.selectbox("Scan every",["5 mins","15 mins","30 mins","1 hour"],key="scan_interval")
+            c1, c2 = st.columns(2)
+            with c1:
+                auto_trade    = st.toggle("Enable Auto Trading", value=False, key="auto_trade")
+            with c2:
+                scan_interval = st.selectbox("Scan every", ["5 mins","15 mins","30 mins","1 hour"], key="scan_interval")
 
-            interval_map={"5 mins":300,"15 mins":900,"30 mins":1800,"1 hour":3600}
-            interval_sec=interval_map[scan_interval]
+            interval_map = {"5 mins":300,"15 mins":900,"30 mins":1800,"1 hour":3600}
+            interval_sec = interval_map[scan_interval]
 
             if auto_trade:
                 st.success(f"Auto trading ON — scanning every {scan_interval}")
                 import streamlit.components.v1 as components
-                components.html(f"""<script>setTimeout(function(){{window.location.reload();}},{interval_sec*1000});</script>""",height=0)
-                scan_btn=True
+                components.html(f"""<script>setTimeout(function(){{window.location.reload();}},{interval_sec*1000});</script>""", height=0)
+                scan_btn = True
                 st.info(f"Next auto-scan in {scan_interval}. Keep this tab open.")
             else:
-                scan_btn=st.button("🔍 Scan & Execute Trades Now",type="primary",use_container_width=True)
+                scan_btn = st.button("🔍 Scan & Execute Trades Now", type="primary", use_container_width=True)
 
             if scan_btn and bot_tickers:
-                positions={}
-                try: positions={p.symbol:float(p.qty) for p in bot_client.get_all_positions()}
-                except: pass
-                port_val=float(bot_client.get_account().portfolio_value)
+                positions = {}
+                try:
+                    positions = {p.symbol: float(p.qty) for p in bot_client.get_all_positions()}
+                except Exception:
+                    pass
+                port_val = float(bot_client.get_account().portfolio_value)
                 st.markdown("### Live Scan Results")
-                prog=st.progress(0); rows=[]
-                for i,ticker in enumerate(bot_tickers):
+                prog = st.progress(0)
+                rows = []
+
+                for i, ticker in enumerate(bot_tickers):
                     prog.progress((i+1)/len(bot_tickers))
                     try:
-                        raw=fetch_data(ticker,interval="4h",days=400)
+                        raw = fetch_data(ticker, interval="4h", days=400)
                         if raw is None:
-                            raw=fetch_data(ticker,interval="1d",days=400)
-                        if raw is None: continue
-                        buy_v=sell_v=0
+                            raw = fetch_data(ticker, interval="1d", days=400)
+                        if raw is None:
+                            continue
+                        buy_v = sell_v = 0
                         for strat in STRATEGIES:
                             try:
-                                e2=generate_signals(raw.copy(),strat)
-                                s2=int(e2["Signal"].iloc[-1])
-                                buy_v  +=1 if s2== 1 else 0
-                                sell_v +=1 if s2==-1 else 0
-                            except: pass
+                                e2 = generate_signals(raw.copy(), strat)
+                                s2 = int(e2["Signal"].iloc[-1])
+                                buy_v  += 1 if s2 ==  1 else 0
+                                sell_v += 1 if s2 == -1 else 0
+                            except Exception:
+                                pass
                         price  = float(raw["Close"].iloc[-1])
                         min_v  = get_min_votes(ticker)
-                        action = "—"; status="HOLD"
-                        if buy_v>=min_v and buy_v>sell_v:
-                            status="BUY"
-                            if ticker not in positions and len(positions)<max_pos:
+                        action = "—"
+                        status = "HOLD"
+
+                        if buy_v >= min_v and buy_v > sell_v:
+                            status = "BUY"
+                            if ticker not in positions and len(positions) < max_pos:
                                 try:
-                                    qty_usd=port_val*(bot_cap_pct/100)
-                                    order=MarketOrderRequest(symbol=ticker,notional=round(qty_usd,2),side=OrderSide.BUY,time_in_force=TimeInForce.DAY)
+                                    qty_usd = port_val * (bot_cap_pct / 100)
+                                    order   = MarketOrderRequest(
+                                        symbol=ticker,
+                                        notional=round(qty_usd, 2),
+                                        side=OrderSide.BUY,
+                                        time_in_force=TimeInForce.DAY
+                                    )
                                     bot_client.submit_order(order)
-                                    action=f"BOUGHT ${qty_usd:.0f}"
-                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),"Ticker":ticker_label(ticker),"Action":"BUY","Price":round(price,2),"Amount":f"${qty_usd:.0f}","Votes":f"{buy_v}/8"})
-                                except Exception as e: action=f"Failed: {e}"
-                            elif ticker in positions: action="Already holding"
-                            else: action="Max positions reached"
-                        elif sell_v>=min_v and sell_v>buy_v:
-                            status="SELL"
+                                    action = f"BOUGHT ${qty_usd:.0f}"
+                                    st.session_state.bot_log.append({
+                                        "Time":   datetime.now().strftime("%H:%M:%S"),
+                                        "Ticker": ticker_label(ticker),
+                                        "Action": "BUY",
+                                        "Price":  round(price, 2),
+                                        "Amount": f"${qty_usd:.0f}",
+                                        "Votes":  f"{buy_v}/8"
+                                    })
+                                except Exception as e:
+                                    action = f"Failed: {e}"
+                            elif ticker in positions:
+                                action = "Already holding"
+                            else:
+                                action = "Max positions reached"
+
+                        elif sell_v >= min_v and sell_v > buy_v:
+                            status = "SELL"
                             if ticker in positions:
                                 try:
                                     bot_client.close_position(ticker)
-                                    action="SOLD position"
-                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),"Ticker":ticker_label(ticker),"Action":"SELL","Price":round(price,2),"Amount":"full","Votes":f"{sell_v}/8"})
-                                except Exception as e: action=f"Failed: {e}"
-                            else: action="No position"
-                        rows.append({"Asset":ticker_label(ticker),"Market":get_market(ticker),"Price":round(price,2),
-                            "Signal":status,"Threshold":f"{min_v}/8","Buy V":buy_v,"Sell V":sell_v,
-                            "Action":action,"Holding":"Yes" if ticker in positions else "No"})
+                                    action = "SOLD position"
+                                    st.session_state.bot_log.append({
+                                        "Time":   datetime.now().strftime("%H:%M:%S"),
+                                        "Ticker": ticker_label(ticker),
+                                        "Action": "SELL",
+                                        "Price":  round(price, 2),
+                                        "Amount": "full",
+                                        "Votes":  f"{sell_v}/8"
+                                    })
+                                except Exception as e:
+                                    action = f"Failed: {e}"
+                            else:
+                                action = "No position"
+
+                        rows.append({
+                            "Asset":    ticker_label(ticker),
+                            "Market":   get_market(ticker),
+                            "Price":    round(price, 2),
+                            "Signal":   status,
+                            "Threshold":f"{min_v}/8",
+                            "Buy V":    buy_v,
+                            "Sell V":   sell_v,
+                            "Action":   action,
+                            "Holding":  "Yes" if ticker in positions else "No"
+                        })
                     except Exception as e:
-                        rows.append({"Asset":ticker_label(ticker),"Market":"—","Price":"—","Signal":"ERROR","Threshold":"—","Buy V":0,"Sell V":0,"Action":str(e),"Holding":"—"})
+                        rows.append({
+                            "Asset":ticker_label(ticker),"Market":"—","Price":"—",
+                            "Signal":"ERROR","Threshold":"—","Buy V":0,"Sell V":0,
+                            "Action":str(e),"Holding":"—"
+                        })
+
                 prog.empty()
                 if rows:
-                    st.dataframe(pd.DataFrame(rows).style.map(sig_color,subset=["Signal"]),use_container_width=True,hide_index=True)
+                    st.dataframe(
+                        pd.DataFrame(rows).style.map(sig_color, subset=["Signal"]),
+                        use_container_width=True, hide_index=True
+                    )
 
             st.markdown("---")
             st.subheader("Open Positions")
             try:
-                positions=bot_client.get_all_positions()
+                positions = bot_client.get_all_positions()
                 if positions:
                     def plc(v):
-                        try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
+                        try: return "color:#3fb950" if float(v) >= 0 else "color:#f85149"
                         except: return ""
-                    st.dataframe(pd.DataFrame([{"Asset":p.symbol,"Qty":float(p.qty),
-                        "Avg Price":float(p.avg_entry_price),"Current":float(p.current_price),
-                        "P&L $":round(float(p.unrealized_pl),2),"P&L %":round(float(p.unrealized_plpc)*100,2)}
-                        for p in positions]).style.map(plc,subset=["P&L $","P&L %"]),use_container_width=True,hide_index=True)
-                    if st.button("Close All Positions",type="primary"):
-                        bot_client.close_all_positions(cancel_orders=True); st.success("All closed!"); st.rerun()
-                else: st.info("No open positions.")
-            except Exception as e: st.error(f"Error: {e}")
+                    st.dataframe(
+                        pd.DataFrame([{
+                            "Asset":    p.symbol,
+                            "Qty":      float(p.qty),
+                            "Avg Price":float(p.avg_entry_price),
+                            "Current":  float(p.current_price),
+                            "P&L $":    round(float(p.unrealized_pl), 2),
+                            "P&L %":    round(float(p.unrealized_plpc)*100, 2)
+                        } for p in positions]).style.map(plc, subset=["P&L $","P&L %"]),
+                        use_container_width=True, hide_index=True
+                    )
+                    if st.button("Close All Positions", type="primary"):
+                        bot_client.close_all_positions(cancel_orders=True)
+                        st.success("All positions closed!")
+                        st.rerun()
+                else:
+                    st.info("No open positions.")
+            except Exception as e:
+                st.error(f"Positions error: {e}")
 
             st.markdown("---")
-            st.subheader("Bot Trade Log")
+            st.subheader("Bot Trade Log (This Session)")
             if st.session_state.bot_log:
-                st.dataframe(pd.DataFrame(st.session_state.bot_log),use_container_width=True,hide_index=True)
-            else: st.info("No trades this session.")
+                st.dataframe(pd.DataFrame(st.session_state.bot_log),
+                             use_container_width=True, hide_index=True)
+            else:
+                st.info("No trades executed yet this session.")
 
             st.markdown("---")
             st.subheader("All Orders (Alpaca)")
             try:
-                orders=bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL,limit=20))
+                orders = bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL, limit=20))
                 if orders:
-                    st.dataframe(pd.DataFrame([{"Time":o.created_at.strftime("%Y-%m-%d %H:%M"),
-                        "Ticker":o.symbol,"Side":o.side.value.upper(),
-                        "Amount":o.notional or o.qty,"Status":o.status.value,
-                        "Fill $":o.filled_avg_price or "—"} for o in orders]),use_container_width=True,hide_index=True)
-                else: st.info("No orders yet.")
-            except Exception as e: st.error(f"Error: {e}")
+                    st.dataframe(pd.DataFrame([{
+                        "Time":   o.created_at.strftime("%Y-%m-%d %H:%M"),
+                        "Ticker": o.symbol,
+                        "Side":   o.side.value.upper(),
+                        "Amount": o.notional or o.qty,
+                        "Status": o.status.value,
+                        "Fill $": o.filled_avg_price or "—"
+                    } for o in orders]), use_container_width=True, hide_index=True)
+                else:
+                    st.info("No orders yet.")
+            except Exception as e:
+                st.error(f"Orders error: {e}")
 
         except Exception as e:
             st.error(f"Could not connect to Alpaca: {e}")
