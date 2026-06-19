@@ -497,10 +497,10 @@ if st.session_state.results:
                 m1,m2,m3,m4,m5 = st.columns(5)
                 sc = "#3fb950" if row["Signal"]=="BUY" else "#f85149"
                 m1.markdown(f"**Signal**<br><span style='color:{sc};font-size:20px;font-weight:bold'>{row['Signal']}</span>", unsafe_allow_html=True)
-                m2.metric("Strategy",  f"{row['Net %']}%")
-                m3.metric("B&H",       f"{row['B&H %']}%")
+                m2.metric("Strategy",  f"{row['Net %']}%" if str(row['Net %']) != 'nan' else "N/A")
+                m3.metric("B&H",       f"{row['B&H %']}%" if str(row['B&H %']) != 'nan' else "N/A")
                 m4.metric("Win Rate",  f"{row['Win Rate']}%")
-                m5.metric("End Value", f"{curr} {row['End Value']:,.0f}")
+                m5.metric("End Value", f"{curr} {row['End Value']:,.0f}" if str(row['End Value']) != 'nan' else "N/A")
 
                 if in_wl:
                     if st.button(f"Remove {lbl} from Watchlist", key=f"wlr_{period_label}"):
