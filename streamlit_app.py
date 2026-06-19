@@ -794,11 +794,10 @@ with tab_bot:
         with b2: api_secret = st.text_input("Alpaca API Secret", type="password", key="bot_api_secret")
 
     if not api_key or not api_secret:
-        st.info("Enter your Alpaca Paper Trading keys above, or add them to Streamlit Secrets.")
-    else:
-    else:
-        try:
-            bot_client = TradingClient(api_key, api_secret, paper=True)
+        st.info("Enter Alpaca keys above or save them in Streamlit Secrets.")
+        st.stop()
+    try:
+        bot_client = TradingClient(api_key, api_secret, paper=True)
             acct       = bot_client.get_account()
             st.markdown("### Account")
             a1,a2,a3,a4=st.columns(4)
