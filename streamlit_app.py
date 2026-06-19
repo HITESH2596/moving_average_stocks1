@@ -763,44 +763,57 @@ with tab_bot:
                 positions = {}
                 try: positions = {p.symbol:float(p.qty) for p in bot_client.get_all_positions()}
                 except Exception: pass
-                port_val = float(bot_client.get_account().portfolio_value)
 
+                # Also get pending orders to avoid duplicate buys
+                pending = set()
+                try:
+                    open_orders = bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
+                    pending = {o.symbol for o in open_orders}
+                except Exception: pass
+
+                port_val = float(bot_client.get_account().portfolio_value)
                 st.markdown("### Live Multi-Timeframe Scan")
                 prog = st.progress(0); rows = []
 
                 for i, ticker in enumerate(bot_tickers):
                     prog.progress((i+1)/len(bot_tickers))
                     try:
-                        # Run each strategy on its best timeframe
                         buy_v, sell_v, detail = get_multi_tf_consensus(ticker)
 
-                        # Get latest price from daily data
+                        # Get latest price
                         price_df = fetch_data(ticker, interval="1d", days=5)
                         if price_df is None:
                             price_df = fetch_data(ticker, interval="1h", days=2)
-                        price = float(price_df["Close"].iloc[-1]) if price_df is not None else 0.0
+                        price = float(price_df["Close"].iloc[-1]) if price_df is not None and len(price_df) > 0 else 0.0
 
-                        min_v   = get_min_votes(ticker)
-                        action  = "—"
-                        status  = "HOLD"
+                        min_v  = get_min_votes(ticker)
+                        action = "—"
+                        status = "HOLD"
+
+                        # Already in position or pending order — skip buying
+                        already_in = ticker in positions or ticker in pending
 
                         if buy_v >= min_v and buy_v > sell_v:
                             status = "BUY"
-                            if ticker not in positions and len(positions) < max_pos:
+                            if not already_in and len(positions) < max_pos:
                                 try:
                                     qty_usd = port_val * (bot_cap_pct/100)
                                     bot_client.submit_order(MarketOrderRequest(
                                         symbol=ticker, notional=round(qty_usd,2),
                                         side=OrderSide.BUY, time_in_force=TimeInForce.DAY))
                                     action = f"BOUGHT ${qty_usd:.0f}"
+                                    positions[ticker] = 1  # mark locally to prevent re-buy this scan
                                     st.session_state.bot_log.append({
-                                        "Time":datetime.now().strftime("%H:%M:%S"),
-                                        "Asset":ticker_label(ticker),"Action":"BUY",
-                                        "Price":round(price,2),"Amount":f"${qty_usd:.0f}",
-                                        "Votes":f"{buy_v}/8","Threshold":f"{min_v}/8"})
+                                        "Time":   datetime.now().strftime("%H:%M:%S"),
+                                        "Asset":  ticker_label(ticker),
+                                        "Action": "BUY",
+                                        "Price":  round(price,2),
+                                        "Amount": f"${qty_usd:.0f}",
+                                        "Votes":  f"{buy_v}/8",
+                                        "Threshold": f"{min_v}/8"})
                                 except Exception as e: action=f"Failed:{e}"
-                            elif ticker in positions: action="Already holding"
-                            else: action="Max positions"
+                            elif already_in: action="Already holding/ordered"
+                            else: action="Max positions reached"
 
                         elif sell_v >= min_v and sell_v > buy_v:
                             status = "SELL"
@@ -809,23 +822,26 @@ with tab_bot:
                                     bot_client.close_position(ticker)
                                     action = "SOLD"
                                     st.session_state.bot_log.append({
-                                        "Time":datetime.now().strftime("%H:%M:%S"),
-                                        "Asset":ticker_label(ticker),"Action":"SELL",
-                                        "Price":round(price,2),"Amount":"full",
-                                        "Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
+                                        "Time":   datetime.now().strftime("%H:%M:%S"),
+                                        "Asset":  ticker_label(ticker),
+                                        "Action": "SELL",
+                                        "Price":  round(price,2),
+                                        "Amount": "full",
+                                        "Votes":  f"{sell_v}/8",
+                                        "Threshold": f"{min_v}/8"})
                                 except Exception as e: action=f"Failed:{e}"
                             else: action="No position"
 
                         rows.append({
-                            "Asset":     ticker_label(ticker),
-                            "Market":    get_market(ticker),
-                            "Price":     round(price,2),
-                            "Signal":    status,
-                            "Threshold": f"{min_v}/8",
-                            "Buy Votes": buy_v,
-                            "Sell Votes":sell_v,
-                            "Action":    action,
-                            "Holding":   "Yes" if ticker in positions else "No"
+                            "Asset":      ticker_label(ticker),
+                            "Market":     get_market(ticker),
+                            "Price":      round(price,2) if price > 0 else "—",
+                            "Signal":     status,
+                            "Threshold":  f"{min_v}/8",
+                            "Buy Votes":  buy_v,
+                            "Sell Votes": sell_v,
+                            "Action":     action,
+                            "Holding":    "Yes" if ticker in positions else "No"
                         })
                     except Exception as e:
                         rows.append({"Asset":ticker_label(ticker),"Market":"—","Price":"—",
@@ -853,11 +869,53 @@ with tab_bot:
                         "P&L %":    round(float(p.unrealized_plpc)*100,2)
                     } for p in pos_list]).style.map(plc,subset=["P&L $","P&L %"]),
                     use_container_width=True, hide_index=True)
-                    if st.button("Close All Positions", type="primary"):
-                        bot_client.close_all_positions(cancel_orders=True)
-                        st.success("All closed!"); st.rerun()
-                else: st.info("No open positions.")
+
+                    pc1, pc2 = st.columns(2)
+                    with pc1:
+                        if st.button("Close ALL Positions", type="primary", use_container_width=True):
+                            bot_client.close_all_positions(cancel_orders=True)
+                            st.success("All positions closed!"); st.rerun()
+                    with pc2:
+                        close_sym = st.selectbox("Close individual position",
+                            ["—"] + [p.symbol for p in pos_list], key="close_sym")
+                        if close_sym != "—":
+                            if st.button(f"Close {close_sym}", use_container_width=True):
+                                bot_client.close_position(close_sym)
+                                st.success(f"{close_sym} closed!"); st.rerun()
+                else:
+                    st.info("No open positions.")
             except Exception as e: st.error(f"Error: {e}")
+
+            st.markdown("---")
+            st.subheader("Pending Orders")
+            try:
+                open_orders = bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
+                if open_orders:
+                    st.dataframe(pd.DataFrame([{
+                        "Time":   o.created_at.strftime("%H:%M:%S"),
+                        "Ticker": o.symbol,
+                        "Side":   o.side.value.upper(),
+                        "Amount": o.notional or o.qty,
+                        "Status": o.status.value,
+                    } for o in open_orders]), use_container_width=True, hide_index=True)
+
+                    oc1, oc2 = st.columns(2)
+                    with oc1:
+                        if st.button("Cancel ALL Pending Orders", use_container_width=True):
+                            bot_client.cancel_orders()
+                            st.success("All pending orders cancelled!"); st.rerun()
+                    with oc2:
+                        cancel_sym = st.selectbox("Cancel specific order",
+                            ["—"] + [o.symbol for o in open_orders], key="cancel_sym")
+                        if cancel_sym != "—":
+                            if st.button(f"Cancel {cancel_sym} order", use_container_width=True):
+                                for o in open_orders:
+                                    if o.symbol == cancel_sym:
+                                        bot_client.cancel_order_by_id(o.id)
+                                st.success(f"{cancel_sym} order cancelled!"); st.rerun()
+                else:
+                    st.info("No pending orders.")
+            except Exception as e: st.error(f"Pending orders error: {e}")
 
             st.markdown("---")
             st.subheader("Bot Trade Log")
