@@ -825,10 +825,22 @@ with tab_bot:
                             elif allow_short and mkt=="US" and ticker not in pending and len(positions)<max_pos:
                                 try:
                                     qty_usd=float(fixed_amt) if trade_mode=="Fixed $" else port_val*(bot_cap_pct/100)
+                                    # Alpaca requires qty (shares) not notional for short sells
                                     shares=max(1,int(qty_usd/price)) if price>0 else 1
-                                    bot_client.submit_order(MarketOrderRequest(symbol=ticker,qty=shares,side=OrderSide.SELL,time_in_force=TimeInForce.DAY))
-                                    action=f"SHORT {shares} shares"; positions[ticker]=-1
-                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),"Asset":ticker_label(ticker),"Action":"SHORT","Price":round(price,2),"Amount":f"{shares} shares","Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
+                                    dollar_val=round(shares*price,2)
+                                    bot_client.submit_order(MarketOrderRequest(
+                                        symbol=ticker,qty=shares,
+                                        side=OrderSide.SELL,time_in_force=TimeInForce.DAY))
+                                    action=f"SHORT {shares} shares (${dollar_val:.0f})"
+                                    positions[ticker]=-1
+                                    st.session_state.bot_log.append({
+                                        "Time":datetime.now().strftime("%H:%M:%S"),
+                                        "Asset":ticker_label(ticker),
+                                        "Action":"SHORT",
+                                        "Price":round(price,2),
+                                        "Amount":f"{shares} shares (~${dollar_val:.0f})",
+                                        "Votes":f"{sell_v}/8",
+                                        "Threshold":f"{min_v}/8"})
                                 except Exception as e: action=f"Short failed:{e}"
                             elif allow_short and mkt!="US": action="Short N/A (US only)"
                             else: action="No long to close"
