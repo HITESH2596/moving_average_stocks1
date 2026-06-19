@@ -381,14 +381,22 @@ if st.session_state.results:
             st.markdown("### Signal Summary")
             col_b, col_s = st.columns(2)
 
+            def fmt(v, suffix=""):
+                if v is None or (isinstance(v, float) and np.isnan(v)):
+                    return "—"
+                return f"{v}{suffix}"
+
             with col_b:
                 st.success(f"BUY Signals — {len(buy_stocks)} stocks")
                 if buy_stocks:
                     st.dataframe(pd.DataFrame([{
-                        "Ticker":r["Ticker"].replace(".NS","").replace("-USD",""),
-                        "Market":r["Market"],"Price":r["Price"],
-                        "Strat %":r["Net %"],"B&H %":r["B&H %"],"Win Rate":r["Win Rate"]}
-                        for r in buy_stocks]).style.map(pct_color, subset=["Strat %","B&H %"]),
+                        "Ticker":   r["Ticker"].replace(".NS","").replace("-USD",""),
+                        "Market":   r["Market"],
+                        "Price":    fmt(r["Price"]),
+                        "Strat %":  fmt(r["Net %"],"%"),
+                        "B&H %":    fmt(r["B&H %"],"%"),
+                        "Win Rate": fmt(r["Win Rate"],"%")}
+                        for r in buy_stocks]),
                         use_container_width=True, hide_index=True)
                 else:
                     st.info("No BUY signals.")
@@ -397,10 +405,13 @@ if st.session_state.results:
                 st.error(f"SELL / CASH — {len(sell_stocks)} stocks")
                 if sell_stocks:
                     st.dataframe(pd.DataFrame([{
-                        "Ticker":r["Ticker"].replace(".NS","").replace("-USD",""),
-                        "Market":r["Market"],"Price":r["Price"],
-                        "Strat %":r["Net %"],"B&H %":r["B&H %"],"Win Rate":r["Win Rate"]}
-                        for r in sell_stocks]).style.map(pct_color, subset=["Strat %","B&H %"]),
+                        "Ticker":   r["Ticker"].replace(".NS","").replace("-USD",""),
+                        "Market":   r["Market"],
+                        "Price":    fmt(r["Price"]),
+                        "Strat %":  fmt(r["Net %"],"%"),
+                        "B&H %":    fmt(r["B&H %"],"%"),
+                        "Win Rate": fmt(r["Win Rate"],"%")}
+                        for r in sell_stocks]),
                         use_container_width=True, hide_index=True)
                 else:
                     st.info("No SELL signals.")
