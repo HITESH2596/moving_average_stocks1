@@ -780,17 +780,30 @@ with tab_bot:
         st.code("alpaca-py", language="text")
         st.stop()
 
-    b1,b2=st.columns(2)
-    with b1: api_key    = st.text_input("Alpaca API Key",    type="password", key="bot_api_key")
-    with b2: api_secret = st.text_input("Alpaca API Secret", type="password", key="bot_api_secret")
+    # Load keys from secrets, allow manual override
+    default_key    = st.secrets.get("ALPACA_KEY",    "")
+    default_secret = st.secrets.get("ALPACA_SECRET", "")
 
-    if not api_key or not api_secret:
-        st.info("Enter your Alpaca Paper Trading keys above.")
-        st.markdown("""
-        1. Go to [alpaca.markets](https://alpaca.markets) — sign up free
-        2. Paper Trading → API Keys → Generate New Key
-        3. Copy API Key + Secret and paste above
-        """)
+    if default_key and default_secret:
+        st.success("Alpaca keys loaded from secrets automatically.")
+        api_key    = default_key
+        api_secret = default_secret
+    else:
+        b1, b2 = st.columns(2)
+        with b1: api_key    = st.text_input("Alpaca API Key",    type="password", key="bot_api_key")
+        with b2: api_secret = st.text_input("Alpaca API Secret", type="password", key="bot_api_secret")
+        if not api_key or not api_secret:
+            st.info("Enter your Alpaca Paper Trading keys above, or add them to Streamlit Secrets.")
+            st.markdown("""
+            1. Go to [alpaca.markets](https://alpaca.markets) — sign up free
+            2. Paper Trading → API Keys → Generate New Key
+            3. Copy API Key + Secret and paste above
+            **Or save permanently:** Streamlit → Manage App → Secrets
+            ```
+            ALPACA_KEY = "your_key"
+            ALPACA_SECRET = "your_secret"
+            ```
+            """)
     else:
         try:
             bot_client = TradingClient(api_key, api_secret, paper=True)
