@@ -343,27 +343,39 @@ def run_backtest(df, capital):
 # CONSENSUS SIGNAL — checks 15m, 1h, 4h, 1d all at once
 # ---------------------------------------------------------------
 def get_multi_tf_consensus(ticker):
-    """
-    Check all 8 strategies across their best timeframes.
-    Returns buy_votes, sell_votes, detail dict
-    """
     buy_v = sell_v = 0
     detail = {}
+    # Fetch data for each unique timeframe once
+    tf_cache = {}
     for strat in STRATEGIES:
-        best_tf = STRATEGY_TF.get(strat, "1d")
+        tf = STRATEGY_TF.get(strat, "1d")
+        if tf not in tf_cache:
+            try:
+                raw = fetch_data(ticker, interval=tf, days=200)
+                if raw is not None and len(raw) >= 20:
+                    tf_cache[tf] = raw
+                else:
+                    # fallback to daily
+                    raw = fetch_data(ticker, interval="1d", days=200)
+                    tf_cache[tf] = raw if raw is not None and len(raw) >= 20 else None
+            except Exception:
+                tf_cache[tf] = None
+
+    for strat in STRATEGIES:
+        tf  = STRATEGY_TF.get(strat, "1d")
+        raw = tf_cache.get(tf)
+        if raw is None:
+            detail[strat] = {"signal":0, "tf":tf}
+            continue
         try:
-            raw = fetch_data(ticker, interval=best_tf, days=200)
-            if raw is None or len(raw) < 20:
-                # fallback to daily
-                raw = fetch_data(ticker, interval="1d", days=200)
-            if raw is None: continue
-            enriched = generate_signals(raw, strat)
+            enriched = generate_signals(raw.copy(), strat)
             sig = int(enriched["Signal"].iloc[-1])
             buy_v  += 1 if sig ==  1 else 0
             sell_v += 1 if sig == -1 else 0
-            detail[strat] = {"signal": sig, "tf": best_tf}
+            detail[strat] = {"signal":sig, "tf":tf}
         except Exception:
-            detail[strat] = {"signal": 0, "tf": best_tf}
+            detail[strat] = {"signal":0, "tf":tf}
+
     return buy_v, sell_v, detail
 
 # ---------------------------------------------------------------
@@ -761,9 +773,16 @@ with tab_bot:
                     try:
                         # Run each strategy on its best timeframe
                         buy_v, sell_v, detail = get_multi_tf_consensus(ticker)
-                        price   = float(fetch_data(ticker,"1d",10)["Close"].iloc[-1])
+
+                        # Get latest price from daily data
+                        price_df = fetch_data(ticker, interval="1d", days=5)
+                        if price_df is None:
+                            price_df = fetch_data(ticker, interval="1h", days=2)
+                        price = float(price_df["Close"].iloc[-1]) if price_df is not None else 0.0
+
                         min_v   = get_min_votes(ticker)
-                        action  = "—"; status = "HOLD"
+                        action  = "—"
+                        status  = "HOLD"
 
                         if buy_v >= min_v and buy_v > sell_v:
                             status = "BUY"
