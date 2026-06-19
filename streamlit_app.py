@@ -792,18 +792,10 @@ with tab_bot:
         b1, b2 = st.columns(2)
         with b1: api_key    = st.text_input("Alpaca API Key",    type="password", key="bot_api_key")
         with b2: api_secret = st.text_input("Alpaca API Secret", type="password", key="bot_api_secret")
-        if not api_key or not api_secret:
-            st.info("Enter your Alpaca Paper Trading keys above, or add them to Streamlit Secrets.")
-            st.markdown("""
-            1. Go to [alpaca.markets](https://alpaca.markets) — sign up free
-            2. Paper Trading → API Keys → Generate New Key
-            3. Copy API Key + Secret and paste above
-            **Or save permanently:** Streamlit → Manage App → Secrets
-            ```
-            ALPACA_KEY = "your_key"
-            ALPACA_SECRET = "your_secret"
-            ```
-            """)
+
+    if not api_key or not api_secret:
+        st.info("Enter your Alpaca Paper Trading keys above, or add them to Streamlit Secrets.")
+    else:
     else:
         try:
             bot_client = TradingClient(api_key, api_secret, paper=True)
