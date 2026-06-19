@@ -958,9 +958,9 @@ with tab_bot:
             with s3:
                 max_pos = st.slider("Max open positions", 1, 10, 5, key="max_pos")
 
-            allow_short = st.toggle("Allow Short Selling (SELL signal opens short position)", value=False, key="allow_short")
+            allow_short = st.toggle("Allow Short Selling (US Stocks only)", value=False, key="allow_short")
             if allow_short:
-                st.warning("Short selling enabled — bot will SELL short when strategies signal SELL. Make sure your Alpaca account allows shorting.")
+                st.warning("Short selling only works for US stocks on Alpaca. Crypto and Commodities will be skipped for shorts.")
 
             st.markdown("**Strategy → Timeframe mapping:**")
             tf_df = pd.DataFrame([{"Strategy":s,"Best Timeframe":STRATEGY_TF[s]} for s in STRATEGIES])
@@ -1065,10 +1065,10 @@ with tab_bot:
 
                         elif sell_v >= min_v and sell_v > buy_v:
                             status = "SELL"
+                            mkt = get_market(ticker)
                             if ticker in positions:
                                 pos_qty = positions[ticker]
                                 if pos_qty > 0:
-                                    # Close existing long position
                                     try:
                                         bot_client.close_position(ticker)
                                         action = "CLOSED LONG"
@@ -1083,8 +1083,8 @@ with tab_bot:
                                     except Exception as e: action=f"Close failed:{e}"
                                 else:
                                     action = "Already short"
-                            elif allow_short and ticker not in pending and len(positions) < max_pos:
-                                # Open new short position
+                            elif allow_short and mkt == "US" and ticker not in pending and len(positions) < max_pos:
+                                # Only short US stocks
                                 try:
                                     if trade_mode == "Fixed $":
                                         qty_usd = float(fixed_amt)
@@ -1095,7 +1095,7 @@ with tab_bot:
                                         notional=round(qty_usd,2),
                                         side=OrderSide.SELL,
                                         time_in_force=TimeInForce.DAY))
-                                    action = f"SHORT SOLD ${qty_usd:.0f}"
+                                    action = f"SHORT ${qty_usd:.0f}"
                                     positions[ticker] = -1
                                     st.session_state.bot_log.append({
                                         "Time":   datetime.now().strftime("%H:%M:%S"),
@@ -1106,8 +1106,10 @@ with tab_bot:
                                         "Votes":  f"{sell_v}/8",
                                         "Threshold": f"{min_v}/8"})
                                 except Exception as e: action=f"Short failed:{e}"
+                            elif allow_short and mkt != "US":
+                                action = "Short N/A (US only)"
                             else:
-                                action = "No long to close" if not allow_short else "No position / pending"
+                                action = "No long to close"
 
                         rows.append({
                             "Asset":      ticker_label(ticker),
@@ -1172,19 +1174,38 @@ with tab_bot:
             try:
                 open_orders = bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
                 if open_orders:
+                    # Show as clean table
+                    order_data = pd.DataFrame([{
+                        "Ticker":  o.symbol,
+                        "Side":    o.side.value.upper(),
+                        "Amount":  f"${float(o.notional):.0f}" if o.notional else str(o.qty),
+                        "Status":  o.status.value,
+                        "Time":    o.created_at.strftime("%H:%M:%S"),
+                        "ID":      str(o.id),
+                    } for o in open_orders])
+                    st.dataframe(order_data.drop(columns=["ID"]),
+                                 use_container_width=True, hide_index=True)
+
+                    # Inline cancel per order
                     st.markdown("**Cancel individual order:**")
                     for o in open_orders:
+                        amt = f"${float(o.notional):.0f}" if o.notional else str(o.qty)
                         c1, c2, c3 = st.columns([2, 2, 1])
                         c1.markdown(f"**{o.symbol}**")
-                        c2.markdown(f"{o.side.value.upper()} ${o.notional or o.qty}")
-                        if c3.button("Cancel", key=f"cancel_ord_{o.id}", use_container_width=True):
-                            bot_client.cancel_order_by_id(o.id)
-                            st.success(f"{o.symbol} order cancelled!"); st.rerun()
+                        c2.markdown(f"{o.side.value.upper()} {amt}")
+                        if c3.button("❌", key=f"cancel_{o.id}", help=f"Cancel {o.symbol} order"):
+                            try:
+                                bot_client.cancel_order_by_id(o.id)
+                                st.success(f"{o.symbol} order cancelled!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Cancel failed: {e}")
 
                     st.markdown("---")
-                    if st.button("Cancel ALL Pending Orders", use_container_width=True):
+                    if st.button("❌ Cancel ALL Pending Orders", use_container_width=True):
                         bot_client.cancel_orders()
-                        st.success("All pending orders cancelled!"); st.rerun()
+                        st.success("All pending orders cancelled!")
+                        st.rerun()
                 else:
                     st.info("No pending orders.")
             except Exception as e:
