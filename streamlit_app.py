@@ -179,8 +179,14 @@ def run_backtest(df, capital):
     signals = df["Signal"].values
     closes  = df["Close"].values
     dates   = df.index
+
     for i in range(len(df)):
-        sig, price, date = signals[i], float(closes[i]), dates[i].strftime("%Y-%m-%d")
+        sig   = signals[i]
+        price = closes[i]
+        if price is None or (isinstance(price, float) and np.isnan(price)):
+            continue
+        price = float(price)
+        date  = dates[i].strftime("%Y-%m-%d")
         if sig == 1 and not in_pos:
             in_pos, entry, entry_date, total = True, price, date, total + 1
         elif sig == -1 and in_pos:
@@ -191,20 +197,31 @@ def run_backtest(df, capital):
             log.append({"Status":"CLOSED","Entry Date":entry_date,"Entry Price":round(entry,4),
                          "Exit Date":date,"Exit Price":round(price,4),
                          "Return %":round(ret*100,2),"Portfolio":round(portfolio,2)})
+
     if in_pos:
-        price = float(closes[-1])
+        last_valid = next((closes[i] for i in range(len(closes)-1,-1,-1)
+                           if closes[i] is not None and not (isinstance(closes[i], float) and np.isnan(closes[i]))), entry)
+        price = float(last_valid)
         ret   = (price - entry) / entry
         portfolio *= (1 + ret)
         if price > entry: wins += 1
         log.append({"Status":"OPEN","Entry Date":entry_date,"Entry Price":round(entry,4),
                      "Exit Date":"Present","Exit Price":round(price,4),
                      "Return %":round(ret*100,2),"Portfolio":round(portfolio,2)})
-    win_rate = wins / total * 100 if total > 0 else 0.0
-    first_cl = df[df["Signal"].notna()]["Close"].iloc[0] if not df[df["Signal"].notna()].empty else closes[0]
-    bh_pct   = (float(closes[-1]) / float(first_cl) - 1) * 100
-    return {"net_pct":round((portfolio/capital-1)*100,2),"bh_pct":round(bh_pct,2),
-            "end_val":round(portfolio,2),"win_rate":round(win_rate,1),
-            "trades":total,"log":log,"last_sig":int(signals[-1]),"last_price":round(float(closes[-1]),4)}
+
+    win_rate  = wins / total * 100 if total > 0 else 0.0
+    last_price = float(next((closes[i] for i in range(len(closes)-1,-1,-1)
+                              if closes[i] is not None and not (isinstance(closes[i], float) and np.isnan(closes[i]))), 0))
+
+    valid_sig = df[df["Signal"].notna() & df["Close"].notna()]
+    first_cl  = float(valid_sig["Close"].iloc[0]) if not valid_sig.empty else last_price
+    bh_pct    = round((last_price / first_cl - 1) * 100, 2) if first_cl > 0 else 0.0
+    net_pct   = round((portfolio / capital - 1) * 100, 2)
+
+    return {"net_pct":net_pct, "bh_pct":bh_pct,
+            "end_val":round(portfolio,2), "win_rate":round(win_rate,1),
+            "trades":total, "log":log, "last_sig":int(signals[-1]),
+            "last_price":last_price}
 
 
 def process_ticker(ticker, strategy, periods, capital):
@@ -251,7 +268,7 @@ def run_engine(tickers, strategy, periods, capital):
     prog.empty()
     status.empty()
     for label in results:
-        results[label].sort(key=lambda x: x["Net %"], reverse=True)
+        results[label].sort(key=lambda x: x["Net %"] if x["Net %"] is not None and not (isinstance(x["Net %"], float) and np.isnan(x["Net %"])) else -999, reverse=True)
     return results
 
 
