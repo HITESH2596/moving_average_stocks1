@@ -16,7 +16,56 @@ except ImportError:
     ALPACA_AVAILABLE = False
 
 DEFAULT_US = ["AAPL","MSFT","NVDA","GOOGL","META","AMZN","TSLA","AMD","NFLX","V","JPM","MS"]
-DEFAULT_IN = ["RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS","WIPRO.NS","BAJFINANCE.NS","SBIN.NS","LT.NS","TATAMOTORS.NS"]
+
+DEFAULT_IN_50 = [
+    "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
+    "WIPRO.NS","BAJFINANCE.NS","SBIN.NS","LT.NS","TATAMOTORS.NS",
+    "HINDUNILVR.NS","ASIANPAINT.NS","MARUTI.NS","SUNPHARMA.NS","TITAN.NS",
+    "ULTRACEMCO.NS","NESTLEIND.NS","POWERGRID.NS","NTPC.NS","ONGC.NS",
+    "COALINDIA.NS","HCLTECH.NS","TECHM.NS","AXISBANK.NS","KOTAKBANK.NS",
+    "INDUSINDBK.NS","BHARTIARTL.NS","ITC.NS","DRREDDY.NS","CIPLA.NS",
+    "DIVISLAB.NS","EICHERMOT.NS","HEROMOTOCO.NS","BAJAJ-AUTO.NS","BPCL.NS",
+    "GRASIM.NS","HINDALCO.NS","JSWSTEEL.NS","TATASTEEL.NS","TATACONSUM.NS",
+    "UPL.NS","APOLLOHOSP.NS","ADANIENT.NS","ADANIGREEN.NS","ADANIPORTS.NS",
+    "BAJAJFINSV.NS","BRITANNIA.NS","SBILIFE.NS","HDFCLIFE.NS","M&M.NS",
+]
+
+DEFAULT_IN = DEFAULT_IN_50 + [
+    # Nifty Next 50
+    "AMBUJACEM.NS","AUROPHARMA.NS","BANDHANBNK.NS","BERGEPAINT.NS","BEL.NS",
+    "BOSCHLTD.NS","CANBK.NS","CHOLAFIN.NS","COLPAL.NS","DABUR.NS",
+    "DLF.NS","GAIL.NS","GODREJCP.NS","HAVELLS.NS","HINDPETRO.NS",
+    "ICICIGI.NS","ICICIPRULI.NS","INDUSTOWER.NS","IRCTC.NS","JUBLFOOD.NS",
+    "LICHSGFIN.NS","LUPIN.NS","MARICO.NS","MCDOWELL-N.NS","MUTHOOTFIN.NS",
+    "NAUKRI.NS","NMDC.NS","OFSS.NS","PAGEIND.NS","PIDILITIND.NS",
+    "PNB.NS","RECLTD.NS","SAIL.NS","SHREECEM.NS","SIEMENS.NS",
+    "SRF.NS","TORNTPHARM.NS","TRENT.NS","VEDL.NS","VOLTAS.NS",
+    "ZOMATO.NS","DMART.NS","PIIND.NS","ALKEM.NS","BALKRISIND.NS",
+    "BIOCON.NS","CONCOR.NS","INDIGO.NS","MFSL.NS","MOTHERSON.NS",
+    # Nifty Midcap 100
+    "ABCAPITAL.NS","ABFRL.NS","AJANTPHARM.NS","APOLLOTYRE.NS","ASHOKLEY.NS",
+    "ASTRAL.NS","ATUL.NS","AUBANK.NS","BAJAJHLDNG.NS",
+    "BATAINDIA.NS","BHEL.NS","BLUEDART.NS","CEATLTD.NS","CROMPTON.NS",
+    "CUMMINSIND.NS","CYIENT.NS","DEEPAKNTR.NS","DIXON.NS","ELGIEQUIP.NS",
+    "ESCORTS.NS","EXIDEIND.NS","FEDERALBNK.NS","FLUOROCHEM.NS",
+    "GLENMARK.NS","GMRINFRA.NS","GNFC.NS","GODREJPROP.NS","GRANULES.NS",
+    "GSPL.NS","GUJGASLTD.NS","HAL.NS","HFCL.NS","HONAUT.NS",
+    "IDFCFIRSTB.NS","IEX.NS","INDHOTEL.NS","INDIANB.NS",
+    "JKCEMENT.NS","JSL.NS","JUBLINGREA.NS","KAJARIACER.NS","KANSAINER.NS",
+    "KEC.NS","LALPATHLAB.NS","LAURUSLABS.NS","LTTS.NS",
+    "LUXIND.NS","MANAPPURAM.NS","MAXHEALTH.NS","MCX.NS",
+    "METROPOLIS.NS","MRF.NS","NATCOPHARM.NS",
+    "NAVINFLUOR.NS","NBCC.NS","NLCINDIA.NS","OBEROIRLTY.NS",
+    "PERSISTENT.NS","PETRONET.NS","PFIZER.NS","PHOENIXLTD.NS","POLYCAB.NS",
+    "PRAJIND.NS","PTC.NS","RAMCOCEM.NS",
+    "RVNL.NS","SBICARD.NS","SCHAEFFLER.NS","SKFINDIA.NS","SOBHA.NS",
+    "SONACOMS.NS","STARHEALTH.NS","SUMICHEM.NS","SUNDARMFIN.NS","SUNDRMFAST.NS",
+    "SUPREMEIND.NS","SYNGENE.NS","TATACHEM.NS","TATACOMM.NS","TATAELXSI.NS",
+    "TATAPOWER.NS","THERMAX.NS","TIMKEN.NS","TTKPRESTIG.NS",
+    "TVSMOTOR.NS","UBLLTD.NS","UNIONBANK.NS",
+    "VBL.NS","WHIRLPOOL.NS","ZEEL.NS","ZYDUSLIFE.NS",
+]
+
 DEFAULT_CR = ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD","ADA-USD","DOGE-USD"]
 DEFAULT_CM = ["GC=F","SI=F","CL=F","NG=F","HG=F","PL=F"]
 COMMODITY_NAMES = {"GC=F":"Gold","SI=F":"Silver","CL=F":"Crude Oil","NG=F":"Natural Gas","HG=F":"Copper","PL=F":"Platinum"}
@@ -79,6 +128,10 @@ def get_min_votes(t): return MARKET_THRESHOLDS.get(get_market(t), 4)
 
 def fmt(v, suffix=""):
     if v is None or (isinstance(v, float) and np.isnan(v)): return "—"
+    if suffix == "" and isinstance(v, float):
+        return f"{v:,.2f}"
+    if isinstance(v, float):
+        return f"{v:.2f}{suffix}"
     return f"{v}{suffix}"
 
 def sig_color(v):
@@ -339,7 +392,7 @@ def process_ticker(ticker,strategy,days,capital,interval):
         if len(sl)<20: return None
         en=generate_signals(sl,strategy); bt=run_backtest(en,capital)
         return {"Ticker":ticker,"Market":get_market(ticker),"Label":ticker_label(ticker),
-                "Price":bt["last_price"],"Signal":"BUY" if bt["last_sig"]==1 else "SELL",
+                "Price":round(bt["last_price"],2),"Signal":"BUY" if bt["last_sig"]==1 else "SELL",
                 "Net %":bt["net_pct"],"B&H %":bt["bh_pct"],"Win Rate":bt["win_rate"],
                 "Trades":bt["trades"],"End Value":bt["end_val"],"_log":bt["log"],"_df":en}
     except: return None
@@ -355,7 +408,7 @@ def process_bot_ticker_bt(ticker,days,capital):
         bt=run_bot_backtest_engine(sl,capital,min_votes)
         sig_txt="BUY" if bt["last_sig"]==1 else "SELL" if bt["last_sig"]==-1 else "HOLD"
         return {"Ticker":ticker,"Market":get_market(ticker),"Label":ticker_label(ticker),
-                "Price":bt["last_price"],"Signal":sig_txt,"Min Votes":min_votes,
+                "Price":round(bt["last_price"],2),"Signal":sig_txt,"Min Votes":min_votes,
                 "Buy Votes":bt["last_buy_v"],"Sell Votes":bt["last_sell_v"],
                 "Net %":bt["net_pct"],"B&H %":bt["bh_pct"],"Win Rate":bt["win_rate"],
                 "Trades":bt["trades"],"End Value":bt["end_val"],"_log":bt["log"],"_df":sl}
@@ -478,16 +531,18 @@ period_label=st.sidebar.selectbox("Backtest Period",list(BACKTEST_PERIODS.keys()
 bt_days=BACKTEST_PERIODS[period_label]
 capital=st.sidebar.number_input("Capital per Asset",min_value=1000,value=100000,step=5000)
 st.sidebar.markdown("---")
-run_us=st.sidebar.button("Run US Stocks",type="primary",use_container_width=True)
-run_in=st.sidebar.button("Run Indian Stocks",type="primary",use_container_width=True)
-run_cr=st.sidebar.button("Run Crypto",type="primary",use_container_width=True)
-run_cm=st.sidebar.button("Run Commodities",type="primary",use_container_width=True)
-run_all=st.sidebar.button("Run ALL Markets",use_container_width=True)
+run_us=st.sidebar.button("🇺🇸 Run US Stocks (12)",type="primary",use_container_width=True)
+run_in50=st.sidebar.button("🇮🇳 Run Nifty 50 (Fast)",use_container_width=True)
+run_in=st.sidebar.button("🇮🇳 Run Nifty 200 (5–8 mins)",type="primary",use_container_width=True)
+run_cr=st.sidebar.button("🪙 Run Crypto",type="primary",use_container_width=True)
+run_cm=st.sidebar.button("🛢️ Run Commodities",type="primary",use_container_width=True)
+run_all=st.sidebar.button("🌍 Run ALL Markets",use_container_width=True)
+st.sidebar.caption("⚠️ Nifty 200 & All Markets scans take 5–8 mins")
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🤖 Bot Consensus Backtest")
 st.sidebar.caption("Same logic as the live bot — all 8 strategies, market-specific thresholds")
 st.sidebar.markdown("🇺🇸 US=5/8 · 🇮🇳 India=4/8 · 🪙 Crypto=3/8 · 🛢️ Comm=4/8")
-bot_bt_market=st.sidebar.selectbox("Market",["US Stocks","Indian Stocks","Crypto","Commodities","All Markets"],key="bot_bt_market")
+bot_bt_market=st.sidebar.selectbox("Market",["US Stocks","Nifty 50","Nifty 200","Crypto","Commodities","All Markets"],key="bot_bt_market")
 run_bot_bt=st.sidebar.button("Run Bot Backtest",use_container_width=True,key="run_bot_bt")
 
 # ═══════════════════════════════════════════════════════════════
@@ -495,26 +550,32 @@ run_bot_bt=st.sidebar.button("Run Bot Backtest",use_container_width=True,key="ru
 # ═══════════════════════════════════════════════════════════════
 tab_bt, tab_bot = st.tabs(["📊 Backtester", "🤖 Paper Trading Bot"])
 
-# ── TRIGGER RUNS (outside tabs so sidebar buttons work) ────────
+# ── TRIGGER RUNS ───────────────────────────────────────────────
 def do_run(tickers,label):
-    with st.spinner(f"Running {label}..."):
+    with st.spinner(f"Running {label}... ({len(tickers)} assets)"):
         res=run_engine(tickers,strategy_name,bt_days,capital,interval)
         st.session_state.bt_results=res
         st.session_state.bt_label=f"{label} · {strategy_name} · {tf_label} · {period_label}"
         st.session_state.bot_bt=[]
         st.rerun()
 
-if run_us:   do_run(DEFAULT_US,"US Stocks")
-elif run_in: do_run(DEFAULT_IN,"Indian Stocks")
-elif run_cr: do_run(DEFAULT_CR,"Crypto")
-elif run_cm: do_run(DEFAULT_CM,"Commodities")
+if run_us:    do_run(DEFAULT_US,"US Stocks")
+elif run_in50: do_run(DEFAULT_IN_50,"Nifty 50")
+elif run_in:  do_run(DEFAULT_IN,"Nifty 200")
+elif run_cr:  do_run(DEFAULT_CR,"Crypto")
+elif run_cm:  do_run(DEFAULT_CM,"Commodities")
 elif run_all: do_run(DEFAULT_US+DEFAULT_IN+DEFAULT_CR+DEFAULT_CM,"All Markets")
 elif run_bot_bt:
-    mkt_map={"US Stocks":DEFAULT_US,"Indian Stocks":DEFAULT_IN,
-             "Crypto":DEFAULT_CR,"Commodities":DEFAULT_CM,
-             "All Markets":DEFAULT_US+DEFAULT_IN+DEFAULT_CR+DEFAULT_CM}
+    mkt_map={
+        "US Stocks":DEFAULT_US,
+        "Nifty 50":DEFAULT_IN_50,
+        "Nifty 200":DEFAULT_IN,
+        "Crypto":DEFAULT_CR,
+        "Commodities":DEFAULT_CM,
+        "All Markets":DEFAULT_US+DEFAULT_IN+DEFAULT_CR+DEFAULT_CM
+    }
     bt_tickers=mkt_map[bot_bt_market]
-    with st.spinner(f"Running Bot Backtest — {bot_bt_market} — {period_label}..."):
+    with st.spinner(f"Running Bot Backtest — {bot_bt_market} — {period_label}... ({len(bt_tickers)} assets)"):
         bot_rows=[]; prog=st.progress(0); status_txt=st.empty()
         for idx,ticker in enumerate(bt_tickers):
             prog.progress((idx+1)/len(bt_tickers))
@@ -537,7 +598,6 @@ with tab_bt:
     results=st.session_state.get("bt_results",[])
     bot_rows=st.session_state.get("bot_bt",[])
 
-    # ── SINGLE STRATEGY RESULTS ─────────────────────────────────
     if results:
         st.markdown(f"## {st.session_state.get('bt_label','Results')}")
         buy_stocks=[r for r in results if r["Signal"]=="BUY"]
@@ -655,7 +715,6 @@ with tab_bt:
                 st.dataframe(ldf.style.map(cr,subset=["Return %"]).map(cst,subset=["Status"]),use_container_width=True,hide_index=True)
             else: st.info("No trades triggered.")
 
-    # ── BOT BACKTEST RESULTS ────────────────────────────────────
     elif bot_rows:
         bot_label=st.session_state.get("bot_bt_label","Bot Consensus Backtest")
         st.markdown(f"## 🤖 {bot_label}")
@@ -718,6 +777,7 @@ with tab_bt:
                 else: st.info("No trades triggered.")
     else:
         st.info("Choose a strategy and period → click a Run button in the sidebar.")
+        st.markdown("**Nifty 50** for a quick scan · **Nifty 200** for a full India scan (5–8 mins)")
         st.markdown("**Or** click **Run Bot Backtest** to test the consensus bot logic.")
 
 # ═══════════════════════════════════════════════════════════════
@@ -825,7 +885,6 @@ with tab_bot:
                             elif allow_short and mkt=="US" and ticker not in pending and len(positions)<max_pos:
                                 try:
                                     qty_usd=float(fixed_amt) if trade_mode=="Fixed $" else port_val*(bot_cap_pct/100)
-                                    # Alpaca requires qty (shares) not notional for short sells
                                     shares=max(1,int(qty_usd/price)) if price>0 else 1
                                     dollar_val=round(shares*price,2)
                                     bot_client.submit_order(MarketOrderRequest(
