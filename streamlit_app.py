@@ -78,11 +78,28 @@ DEFAULT_IN = DEFAULT_IN_50 + [
 
 DEFAULT_CR = ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD","ADA-USD","DOGE-USD"]
 DEFAULT_CM = ["GC=F","SI=F","CL=F","NG=F","HG=F","PL=F"]
-COMMODITY_NAMES = {"GC=F":"Gold","SI=F":"Silver","CL=F":"Crude Oil","NG=F":"Natural Gas","HG=F":"Copper","PL=F":"Platinum"}
+COMMODITY_NAMES = {
+    "GC=F":"Gold","SI=F":"Silver","CL=F":"Crude Oil",
+    "NG=F":"Natural Gas","HG=F":"Copper","PL=F":"Platinum"
+}
 
-CRYPTO_ALPACA_MAP = {
+# ── Crypto symbol maps ─────────────────────────────────────────
+# yfinance -> Alpaca order format (BTC/USD)
+CRYPTO_ORDER_MAP = {
     "BTC-USD":"BTC/USD","ETH-USD":"ETH/USD","SOL-USD":"SOL/USD",
     "BNB-USD":"BNB/USD","XRP-USD":"XRP/USD","ADA-USD":"ADA/USD","DOGE-USD":"DOGE/USD",
+}
+# yfinance -> Alpaca close_position format (BTCUSD)
+CRYPTO_CLOSE_MAP = {
+    "BTC-USD":"BTCUSD","ETH-USD":"ETHUSD","SOL-USD":"SOLUSD",
+    "BNB-USD":"BNBUSD","XRP-USD":"XRPUSD","ADA-USD":"ADAUSD","DOGE-USD":"DOGEUSD",
+}
+# Alpaca position symbol -> yfinance format
+CRYPTO_POSITION_MAP = {
+    "BTCUSD":"BTC-USD","ETHUSD":"ETH-USD","SOLUSD":"SOL-USD",
+    "BNBUSD":"BNB-USD","XRPUSD":"XRP-USD","ADAUSD":"ADA-USD","DOGEUSD":"DOGE-USD",
+    "BTC/USD":"BTC-USD","ETH/USD":"ETH-USD","SOL/USD":"SOL-USD",
+    "BNB/USD":"BNB-USD","XRP/USD":"XRP-USD","ADA/USD":"ADA-USD","DOGE/USD":"DOGE-USD",
 }
 
 STRATEGIES = [
@@ -106,10 +123,10 @@ CHART_INTERVALS = {
     "15 Minutes":"15m","1 Hour":"1h","4 Hours":"4h","1 Day":"1d",
 }
 
-for k, v in [("bt_results",[]),("bt_label",""),("bot_bt",[]),
-              ("bot_bt_label",""),("watchlist",[]),("bot_log",[])]:
+for k,v in [("bt_results",[]),("bt_label",""),("bot_bt",[]),
+            ("bot_bt_label",""),("watchlist",[]),("bot_log",[])]:
     if k not in st.session_state:
-        st.session_state[k] = v
+        st.session_state[k]=v
 
 def get_market(t):
     if t.endswith(".NS"): return "India"
@@ -123,13 +140,21 @@ def ticker_label(t):
 
 def get_min_votes(t): return MARKET_THRESHOLDS.get(get_market(t),4)
 
-def to_alpaca_symbol(ticker):
-    return CRYPTO_ALPACA_MAP.get(ticker, ticker)
+def to_alpaca_order_symbol(ticker):
+    """For placing BUY orders — BTC/USD format"""
+    return CRYPTO_ORDER_MAP.get(ticker, ticker)
+
+def to_alpaca_close_symbol(ticker):
+    """For close_position — BTCUSD format (no slash)"""
+    return CRYPTO_CLOSE_MAP.get(ticker, ticker)
 
 def normalize_position_symbol(sym):
-    return sym.replace("/USD","-USD") if "/" in sym else sym
+    """Convert Alpaca position symbol back to yfinance format"""
+    if sym in CRYPTO_POSITION_MAP:
+        return CRYPTO_POSITION_MAP[sym]
+    return sym
 
-def fmt(v, suffix=""):
+def fmt(v,suffix=""):
     if v is None or (isinstance(v,float) and np.isnan(v)): return "—"
     if suffix=="" and isinstance(v,float): return f"{v:,.2f}"
     if isinstance(v,float): return f"{v:.2f}{suffix}"
@@ -156,7 +181,7 @@ def compute_rsi(s,p=14):
 
 def compute_bb(s,w=20,n=2):
     mid=s.rolling(w).mean(); std=s.rolling(w).std()
-    return mid+n*std, mid, mid-n*std
+    return mid+n*std,mid,mid-n*std
 
 def clean_df(raw):
     if isinstance(raw.columns,pd.MultiIndex):
@@ -804,7 +829,7 @@ with tab_bot:
             allow_short=st.toggle("Allow Short Selling (US Stocks only)",value=False,key="allow_short")
             if allow_short: st.warning("Short selling only works for US stocks on Alpaca.")
             st.info("**Thresholds:** 🇺🇸 US=5/8 · 🇮🇳 India=4/8 · 🪙 Crypto=3/8 · 🛢️ Commodities=4/8")
-            st.caption("🪙 Crypto uses BTC/USD format & GTC orders · 🛢️ Commodities are signal-only (not tradeable on Alpaca)")
+            st.caption("🪙 Crypto: orders use BTC/USD, close uses BTCUSD · 🛢️ Commodities: signal only")
             bot_tickers=st.multiselect("Assets to scan",DEFAULT_US+DEFAULT_CR+DEFAULT_CM,
                 default=["AAPL","NVDA","MSFT","BTC-USD","ETH-USD","GC=F"],format_func=ticker_label,key="bot_tickers")
             st.markdown("---")
@@ -822,7 +847,7 @@ with tab_bot:
                 scan_btn=st.button("🔍 Scan All Timeframes & Execute Trades",type="primary",use_container_width=True)
 
             if scan_btn and bot_tickers:
-                # Load positions — normalize crypto symbols back to yfinance format
+                # ── Load positions: normalize ALL crypto formats to yfinance ──
                 positions={}
                 try:
                     for p in bot_client.get_all_positions():
@@ -830,11 +855,12 @@ with tab_bot:
                         positions[sym]=float(p.qty)
                 except: pass
 
-                # Load pending orders
+                # ── Load pending orders ──
                 pending=set()
                 try:
                     oo=bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
-                    for o in oo: pending.add(normalize_position_symbol(o.symbol))
+                    for o in oo:
+                        pending.add(normalize_position_symbol(o.symbol))
                 except: pass
 
                 port_val=float(bot_client.get_account().portfolio_value)
@@ -850,7 +876,9 @@ with tab_bot:
                         price=float(pdf["Close"].iloc[-1]) if pdf is not None and len(pdf)>0 else 0.0
                         min_v=get_min_votes(ticker)
                         mkt=get_market(ticker)
-                        alpaca_sym=to_alpaca_symbol(ticker)
+                        # Use correct symbol formats per operation
+                        order_sym=to_alpaca_order_symbol(ticker)   # BTC/USD for buying
+                        close_sym=to_alpaca_close_symbol(ticker)   # BTCUSD for closing
                         action="—"; status="HOLD"
                         already_in=ticker in positions or ticker in pending
                         qty_usd=float(fixed_amt) if trade_mode=="Fixed $" else port_val*(bot_cap_pct/100)
@@ -858,90 +886,116 @@ with tab_bot:
                         if buy_v>=min_v and buy_v>sell_v:
                             status="BUY"
                             pos_qty=positions.get(ticker,0)
+
                             if mkt=="Commodity":
                                 action="Signal only — not tradeable on Alpaca"
+
                             elif pos_qty<0:
+                                # Close existing short using BTCUSD format
                                 try:
-                                    bot_client.close_position(alpaca_sym); action="CLOSED SHORT"
-                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),
+                                    bot_client.close_position(close_sym)
+                                    action="CLOSED SHORT"
+                                    st.session_state.bot_log.append({
+                                        "Time":datetime.now().strftime("%H:%M:%S"),
                                         "Asset":ticker_label(ticker),"Action":"CLOSE SHORT",
                                         "Price":round(price,2),"Amount":"full",
                                         "Votes":f"{buy_v}/8","Threshold":f"{min_v}/8"})
-                                except Exception as e: action=f"Failed:{e}"
+                                except Exception as e: action=f"Close short failed: {e}"
+
                             elif not already_in and len(positions)<max_pos:
                                 try:
                                     if mkt=="Crypto":
+                                        # Crypto: fractional qty, GTC, BTC/USD symbol
                                         qty=round(qty_usd/price,6) if price>0 else 0
                                         if qty>0:
                                             bot_client.submit_order(MarketOrderRequest(
-                                                symbol=alpaca_sym,qty=qty,
-                                                side=OrderSide.BUY,time_in_force=TimeInForce.GTC))
+                                                symbol=order_sym,qty=qty,
+                                                side=OrderSide.BUY,
+                                                time_in_force=TimeInForce.GTC))
                                             action=f"BOUGHT {qty} {ticker_label(ticker)} (${qty_usd:.0f})"
                                         else: action="Price unavailable"
                                     else:
+                                        # Stocks: notional dollar amount, DAY order
                                         bot_client.submit_order(MarketOrderRequest(
-                                            symbol=alpaca_sym,notional=round(qty_usd,2),
-                                            side=OrderSide.BUY,time_in_force=TimeInForce.DAY))
+                                            symbol=order_sym,notional=round(qty_usd,2),
+                                            side=OrderSide.BUY,
+                                            time_in_force=TimeInForce.DAY))
                                         action=f"BOUGHT ${qty_usd:.0f}"
                                     positions[ticker]=1
-                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),
+                                    st.session_state.bot_log.append({
+                                        "Time":datetime.now().strftime("%H:%M:%S"),
                                         "Asset":ticker_label(ticker),"Action":"BUY",
                                         "Price":round(price,2),"Amount":action,
                                         "Votes":f"{buy_v}/8","Threshold":f"{min_v}/8"})
-                                except Exception as e: action=f"Failed:{e}"
+                                except Exception as e: action=f"Buy failed: {e}"
+
                             elif already_in: action="Already holding/ordered"
                             else: action="Max positions reached"
 
                         elif sell_v>=min_v and sell_v>buy_v:
                             status="SELL"
+
                             if mkt=="Commodity":
                                 action="Signal only — not tradeable on Alpaca"
-                            elif ticker in positions:
-                                pos_qty=positions[ticker]
-                                if pos_qty>0:
-                                    try:
-                                        bot_client.close_position(alpaca_sym); action="CLOSED LONG"
-                                        st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),
-                                            "Asset":ticker_label(ticker),"Action":"CLOSE LONG",
-                                            "Price":round(price,2),"Amount":"full",
-                                            "Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
-                                    except Exception as e: action=f"Failed:{e}"
-                                else: action="Already short"
+
+                            elif ticker in positions and positions[ticker]>0:
+                                # Close long position — use BTCUSD format for crypto
+                                try:
+                                    bot_client.close_position(close_sym)
+                                    action="CLOSED LONG ✅ Profit booked"
+                                    del positions[ticker]
+                                    st.session_state.bot_log.append({
+                                        "Time":datetime.now().strftime("%H:%M:%S"),
+                                        "Asset":ticker_label(ticker),"Action":"CLOSE LONG",
+                                        "Price":round(price,2),"Amount":"full position",
+                                        "Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
+                                except Exception as e: action=f"Close failed: {e}"
+
+                            elif ticker in positions and positions[ticker]<0:
+                                action="Already short"
+
                             elif allow_short and mkt=="US" and ticker not in pending and len(positions)<max_pos:
                                 try:
                                     shares=max(1,int(qty_usd/price)) if price>0 else 1
                                     dollar_val=round(shares*price,2)
                                     bot_client.submit_order(MarketOrderRequest(
-                                        symbol=alpaca_sym,qty=shares,
-                                        side=OrderSide.SELL,time_in_force=TimeInForce.DAY))
+                                        symbol=order_sym,qty=shares,
+                                        side=OrderSide.SELL,
+                                        time_in_force=TimeInForce.DAY))
                                     action=f"SHORT {shares} shares (${dollar_val:.0f})"
                                     positions[ticker]=-1
-                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),
+                                    st.session_state.bot_log.append({
+                                        "Time":datetime.now().strftime("%H:%M:%S"),
                                         "Asset":ticker_label(ticker),"Action":"SHORT",
                                         "Price":round(price,2),
                                         "Amount":f"{shares} shares (~${dollar_val:.0f})",
                                         "Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
-                                except Exception as e: action=f"Short failed:{e}"
+                                except Exception as e: action=f"Short failed: {e}"
+
                             elif mkt=="Crypto": action="No long to close"
                             elif allow_short and mkt!="US": action="Short N/A (US only)"
-                            else: action="No long to close"
+                            else: action="No long position to close"
 
-                        rows.append({"Asset":ticker_label(ticker),"Market":mkt,
+                        rows.append({
+                            "Asset":ticker_label(ticker),"Market":mkt,
                             "Price":f"${price:,.2f}" if price>0 else "—",
                             "Signal":status,"Threshold":f"{min_v}/8",
                             "Buy Votes":buy_v,"Sell Votes":sell_v,
-                            "Alpaca Symbol":alpaca_sym,"Action":action,
+                            "Order Symbol":order_sym,"Action":action,
                             "Holding":"Yes" if ticker in positions else "No"})
+
                     except Exception as e:
-                        rows.append({"Asset":ticker_label(ticker),"Market":"—","Price":"—",
+                        rows.append({
+                            "Asset":ticker_label(ticker),"Market":"—","Price":"—",
                             "Signal":"ERROR","Threshold":"—","Buy Votes":0,"Sell Votes":0,
-                            "Alpaca Symbol":"—","Action":str(e),"Holding":"—"})
+                            "Order Symbol":"—","Action":str(e),"Holding":"—"})
 
                 prog.empty()
                 if rows:
                     st.dataframe(pd.DataFrame(rows).style.map(sig_color,subset=["Signal"]),
                         use_container_width=True,hide_index=True)
 
+            # ── Open Positions ──
             st.markdown("---"); st.subheader("Open Positions")
             try:
                 pos_list=bot_client.get_all_positions()
@@ -949,8 +1003,10 @@ with tab_bot:
                     def plc(v):
                         try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
                         except: return ""
-                    st.dataframe(pd.DataFrame([{"Asset":p.symbol,"Qty":float(p.qty),
-                        "Avg":round(float(p.avg_entry_price),4),
+                    st.dataframe(pd.DataFrame([{
+                        "Asset":p.symbol,
+                        "Qty":float(p.qty),
+                        "Avg Entry":round(float(p.avg_entry_price),4),
                         "Current":round(float(p.current_price),4),
                         "P&L $":round(float(p.unrealized_pl),2),
                         "P&L %":round(float(p.unrealized_plpc)*100,2)}
@@ -958,22 +1014,29 @@ with tab_bot:
                         use_container_width=True,hide_index=True)
                     st.markdown("**Close individual position:**")
                     for p in pos_list:
-                        c1,c2,c3=st.columns([2,2,1]); pnl=round(float(p.unrealized_pl),2)
+                        c1,c2,c3=st.columns([2,2,1])
+                        pnl=round(float(p.unrealized_pl),2)
                         c1.markdown(f"**{p.symbol}**")
                         c2.markdown(f"P&L: {'🟢' if pnl>=0 else '🔴'} ${pnl:+.2f}")
                         if c3.button("Close",key=f"close_pos_{p.symbol}",use_container_width=True):
-                            bot_client.close_position(p.symbol); st.success(f"{p.symbol} closed!"); st.rerun()
+                            try:
+                                bot_client.close_position(p.symbol)
+                                st.success(f"{p.symbol} closed!"); st.rerun()
+                            except Exception as e: st.error(f"Failed: {e}")
                     st.markdown("---")
                     if st.button("🔴 Close ALL Positions",type="primary",use_container_width=True):
-                        bot_client.close_all_positions(cancel_orders=True); st.success("All closed!"); st.rerun()
+                        bot_client.close_all_positions(cancel_orders=True)
+                        st.success("All positions closed!"); st.rerun()
                 else: st.info("No open positions.")
             except Exception as e: st.error(f"Positions error: {e}")
 
+            # ── Pending Orders ──
             st.markdown("---"); st.subheader("Pending Orders")
             try:
                 open_orders=bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
                 if open_orders:
-                    st.dataframe(pd.DataFrame([{"Ticker":o.symbol,"Side":o.side.value.upper(),
+                    st.dataframe(pd.DataFrame([{
+                        "Ticker":o.symbol,"Side":o.side.value.upper(),
                         "Amount":f"${float(o.notional):.0f}" if o.notional else str(o.qty),
                         "Status":o.status.value,"Time":o.created_at.strftime("%H:%M:%S")}
                         for o in open_orders]),use_container_width=True,hide_index=True)
@@ -991,18 +1054,22 @@ with tab_bot:
                 else: st.info("No pending orders.")
             except Exception as e: st.error(f"Pending orders error: {e}")
 
+            # ── Bot Trade Log ──
             st.markdown("---"); st.subheader("Bot Trade Log")
             if st.session_state.bot_log:
                 st.dataframe(pd.DataFrame(st.session_state.bot_log),use_container_width=True,hide_index=True)
             else: st.info("No trades this session.")
 
+            # ── All Orders ──
             st.markdown("---"); st.subheader("All Orders (Alpaca)")
             try:
                 orders=bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL,limit=20))
                 if orders:
-                    st.dataframe(pd.DataFrame([{"Time":o.created_at.strftime("%Y-%m-%d %H:%M"),
+                    st.dataframe(pd.DataFrame([{
+                        "Time":o.created_at.strftime("%Y-%m-%d %H:%M"),
                         "Ticker":o.symbol,"Side":o.side.value.upper(),
-                        "Amount":o.notional or o.qty,"Status":o.status.value,
+                        "Amount":o.notional or o.qty,
+                        "Status":o.status.value,
                         "Fill $":o.filled_avg_price or "—"}
                         for o in orders]),use_container_width=True,hide_index=True)
                 else: st.info("No orders yet.")
