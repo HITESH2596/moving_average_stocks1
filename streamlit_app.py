@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import requests
 from datetime import datetime, timedelta
 
 st.set_page_config(layout="wide", page_title="TradeSignal Pro")
@@ -540,6 +541,64 @@ def show_performance(log_t,row,curr,capital):
         st.markdown(f"**Strategy Rating:** <span style='color:{rc};font-size:18px'>{rm.get(score,'⭐⭐⭐')}</span> &nbsp; Score: {score}/5",unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════
+# VOLUME GAINERS — India (NSE live) & US
+# ═══════════════════════════════════════════════════════════════
+NSE_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.nseindia.com/market-data/volume-gainers-spurts",
+}
+
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_nse_volume_gainers():
+    """Live NSE volume gainers via their internal JSON API.
+    Requires a homepage hit first to obtain session cookies (NSE blocks
+    direct API calls without them). May be blocked from cloud/datacenter IPs."""
+    session = requests.Session()
+    session.headers.update(NSE_HEADERS)
+    session.get("https://www.nseindia.com", timeout=10)
+    resp = session.get("https://www.nseindia.com/api/live-analysis-volume-gainers", timeout=10)
+    resp.raise_for_status()
+    rows = resp.json().get("data", [])
+    df = pd.DataFrame(rows)
+    rmap = {"symbol":"Symbol","series":"Series","totalTradedVolume":"Volume",
+            "ltp":"LTP","perChange":"% Change","weekHighLowAvgVol":"20D Avg Vol",
+            "volumeRatio":"Vol Ratio (x)"}
+    cols = [c for c in rmap if c in df.columns]
+    df = df[cols].rename(columns=rmap)
+    if "Volume" in df.columns:
+        df = df.sort_values("Volume", ascending=False).reset_index(drop=True)
+    return df
+
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_us_volume_gainers(tickers):
+    """Rank US tickers by today's volume vs 20-day average volume (via yfinance).
+    Not a true market-wide screener — ranks the provided universe only."""
+    rows = []
+    for t in tickers:
+        try:
+            df = fetch_data(t, interval="1d", days=30)
+            if df is None or len(df) < 5 or "Volume" not in df.columns:
+                continue
+            today_vol = float(df["Volume"].iloc[-1])
+            avg_vol = float(df["Volume"].iloc[:-1].tail(20).mean())
+            price = float(df["Close"].iloc[-1])
+            pct_chg = (price / float(df["Close"].iloc[-2]) - 1) * 100 if len(df) > 1 else 0.0
+            rows.append({
+                "Symbol": t, "Price": round(price, 2), "% Change": round(pct_chg, 2),
+                "Volume": int(today_vol), "20D Avg Vol": int(avg_vol),
+                "Vol Ratio (x)": round(today_vol / avg_vol, 2) if avg_vol > 0 else 0,
+            })
+        except Exception:
+            continue
+    df_out = pd.DataFrame(rows)
+    if not df_out.empty:
+        df_out = df_out.sort_values("Volume", ascending=False).reset_index(drop=True)
+    return df_out
+
+# ═══════════════════════════════════════════════════════════════
 # SIDEBAR
 # ═══════════════════════════════════════════════════════════════
 st.sidebar.header("Backtest Settings")
@@ -567,7 +626,7 @@ st.sidebar.markdown("🇺🇸 US=5/8 · 🇮🇳 India=4/8 · 🪙 Crypto=3/8 ·
 bot_bt_market=st.sidebar.selectbox("Market",["US Stocks","Nifty 50","Nifty 200","Crypto","Commodities","All Markets"],key="bot_bt_market")
 run_bot_bt=st.sidebar.button("Run Bot Backtest",use_container_width=True,key="run_bot_bt")
 
-tab_bt,tab_bot=st.tabs(["📊 Backtester","🤖 Paper Trading Bot"])
+tab_bt,tab_bot,tab_vol=st.tabs(["📊 Backtester","🤖 Paper Trading Bot","📈 Volume Gainers"])
 
 def do_run(tickers,label):
     with st.spinner(f"Running {label}... ({len(tickers)} assets)"):
@@ -1076,3 +1135,57 @@ with tab_bot:
             except Exception as e: st.error(f"Error: {e}")
 
         except Exception as e: st.error(f"Could not connect to Alpaca: {e}")
+
+# ═══════════════════════════════════════════════════════════════
+# TAB 3 — VOLUME GAINERS (India NSE live + US)
+# ═══════════════════════════════════════════════════════════════
+with tab_vol:
+    st.title("📈 Volume Gainers — India & US")
+    vmkt=st.radio("Market",["🇮🇳 India (NSE Live)","🇺🇸 US"],horizontal=True,key="vol_mkt")
+
+    if vmkt.startswith("🇮🇳"):
+        c1,c2=st.columns([3,1])
+        with c2:
+            if st.button("🔄 Refresh",key="nse_refresh"):
+                fetch_nse_volume_gainers.clear()
+        try:
+            with st.spinner("Fetching live NSE data..."):
+                ndf=fetch_nse_volume_gainers()
+            if ndf.empty:
+                st.warning("NSE returned no data — market may be closed, or the request was blocked.")
+            else:
+                st.caption(f"Last fetched: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                st.dataframe(ndf,use_container_width=True,hide_index=True)
+                top=ndf.iloc[0]
+                st.metric(f"🔥 Highest Volume: {top.get('Symbol','—')}",
+                          f"{top.get('Volume',0):,.0f} shares")
+        except Exception as e:
+            st.error(
+                "Couldn't reach NSE — they frequently block cloud/datacenter IPs "
+                f"(including Streamlit Cloud). Works more reliably run locally.\n\nDetail: {e}"
+            )
+        st.caption(
+            "⚠️ NSE's public API isn't officially documented and can change or "
+            "block traffic without notice, especially from cloud IPs."
+        )
+
+    else:
+        us_universe=st.multiselect(
+            "Tickers to scan",DEFAULT_US,default=DEFAULT_US,key="vol_us_universe"
+        )
+        if st.button("🔍 Scan US Volume",type="primary",key="vol_us_scan"):
+            with st.spinner(f"Scanning {len(us_universe)} US tickers..."):
+                udf=fetch_us_volume_gainers(tuple(us_universe))
+            st.session_state["us_vol_df"]=udf
+        udf=st.session_state.get("us_vol_df",pd.DataFrame())
+        if not udf.empty:
+            st.caption(f"Last scanned: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            st.dataframe(udf,use_container_width=True,hide_index=True)
+            top=udf.iloc[0]
+            st.metric(f"🔥 Highest Volume: {top['Symbol']}",f"{top['Volume']:,.0f} shares")
+        else:
+            st.info("Select tickers and click **Scan US Volume**.")
+        st.caption(
+            "Ranks today's volume vs 20-day average across your selected US watchlist "
+            "(not a market-wide screener — yfinance has no such endpoint)."
+        )
