@@ -573,6 +573,32 @@ def fetch_nse_volume_gainers():
     return df
 
 @st.cache_data(ttl=120, show_spinner=False)
+def fetch_in_volume_gainers(tickers):
+    """Fallback for when NSE's live API is blocked (e.g. on Streamlit Cloud).
+    Ranks the given .NS tickers by today's volume vs 20-day average, via yfinance."""
+    rows = []
+    for t in tickers:
+        try:
+            df = fetch_data(t, interval="1d", days=30)
+            if df is None or len(df) < 5 or "Volume" not in df.columns:
+                continue
+            today_vol = float(df["Volume"].iloc[-1])
+            avg_vol = float(df["Volume"].iloc[:-1].tail(20).mean())
+            price = float(df["Close"].iloc[-1])
+            pct_chg = (price / float(df["Close"].iloc[-2]) - 1) * 100 if len(df) > 1 else 0.0
+            rows.append({
+                "Symbol": t.replace(".NS", ""), "Price": round(price, 2), "% Change": round(pct_chg, 2),
+                "Volume": int(today_vol), "20D Avg Vol": int(avg_vol),
+                "Vol Ratio (x)": round(today_vol / avg_vol, 2) if avg_vol > 0 else 0,
+            })
+        except Exception:
+            continue
+    df_out = pd.DataFrame(rows)
+    if not df_out.empty:
+        df_out = df_out.sort_values("Volume", ascending=False).reset_index(drop=True)
+    return df_out
+
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_us_volume_gainers(tickers):
     """Rank US tickers by today's volume vs 20-day average volume (via yfinance).
     Not a true market-wide screener — ranks the provided universe only."""
@@ -907,11 +933,12 @@ with tab_bot:
 
             if scan_btn and bot_tickers:
                 # ── Load positions: normalize ALL crypto formats to yfinance ──
-                positions={}
+                positions={}; pos_entry={}
                 try:
                     for p in bot_client.get_all_positions():
                         sym=normalize_position_symbol(p.symbol)
                         positions[sym]=float(p.qty)
+                        pos_entry[sym]=float(p.avg_entry_price)
                 except: pass
 
                 # ── Load pending orders ──
@@ -952,12 +979,19 @@ with tab_bot:
                             elif pos_qty<0:
                                 # Close existing short using BTCUSD format
                                 try:
+                                    entry_px=pos_entry.get(ticker,price)
+                                    qty_held=abs(pos_qty)
+                                    pnl_dollar=round((entry_px-price)*qty_held,2)
+                                    pnl_pct=round((entry_px-price)/entry_px*100,2) if entry_px else 0.0
                                     bot_client.close_position(close_sym)
-                                    action="CLOSED SHORT"
+                                    pnl_tag="🟢 PROFIT" if pnl_dollar>=0 else "🔴 LOSS"
+                                    action=f"CLOSED SHORT — {pnl_tag} ${pnl_dollar:+,.2f} ({pnl_pct:+.2f}%)"
                                     st.session_state.bot_log.append({
                                         "Time":datetime.now().strftime("%H:%M:%S"),
                                         "Asset":ticker_label(ticker),"Action":"CLOSE SHORT",
                                         "Price":round(price,2),"Amount":"full",
+                                        "Entry Price":round(entry_px,4),"Qty":qty_held,
+                                        "P&L $":pnl_dollar,"P&L %":pnl_pct,
                                         "Votes":f"{buy_v}/8","Threshold":f"{min_v}/8"})
                                 except Exception as e: action=f"Close short failed: {e}"
 
@@ -1000,13 +1034,20 @@ with tab_bot:
                             elif ticker in positions and positions[ticker]>0:
                                 # Close long position — use BTCUSD format for crypto
                                 try:
+                                    entry_px=pos_entry.get(ticker,price)
+                                    qty_held=positions[ticker]
+                                    pnl_dollar=round((price-entry_px)*qty_held,2)
+                                    pnl_pct=round((price-entry_px)/entry_px*100,2) if entry_px else 0.0
                                     bot_client.close_position(close_sym)
-                                    action="CLOSED LONG ✅ Profit booked"
+                                    pnl_tag="🟢 PROFIT" if pnl_dollar>=0 else "🔴 LOSS"
+                                    action=f"CLOSED LONG — {pnl_tag} ${pnl_dollar:+,.2f} ({pnl_pct:+.2f}%)"
                                     del positions[ticker]
                                     st.session_state.bot_log.append({
                                         "Time":datetime.now().strftime("%H:%M:%S"),
                                         "Asset":ticker_label(ticker),"Action":"CLOSE LONG",
                                         "Price":round(price,2),"Amount":"full position",
+                                        "Entry Price":round(entry_px,4),"Qty":qty_held,
+                                        "P&L $":pnl_dollar,"P&L %":pnl_pct,
                                         "Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
                                 except Exception as e: action=f"Close failed: {e}"
 
@@ -1075,15 +1116,42 @@ with tab_bot:
                     for p in pos_list:
                         c1,c2,c3=st.columns([2,2,1])
                         pnl=round(float(p.unrealized_pl),2)
+                        pnl_pct=round(float(p.unrealized_plpc)*100,2)
                         c1.markdown(f"**{p.symbol}**")
-                        c2.markdown(f"P&L: {'🟢' if pnl>=0 else '🔴'} ${pnl:+.2f}")
+                        c2.markdown(f"P&L: {'🟢' if pnl>=0 else '🔴'} ${pnl:+.2f} ({pnl_pct:+.2f}%)")
                         if c3.button("Close",key=f"close_pos_{p.symbol}",use_container_width=True):
                             try:
+                                exit_price=round(float(p.current_price),4)
+                                entry_price=round(float(p.avg_entry_price),4)
+                                qty_c=float(p.qty)
                                 bot_client.close_position(p.symbol)
-                                st.success(f"{p.symbol} closed!"); st.rerun()
+                                pnl_tag="🟢 PROFIT" if pnl>=0 else "🔴 LOSS"
+                                st.session_state.bot_log.append({
+                                    "Time":datetime.now().strftime("%H:%M:%S"),
+                                    "Asset":p.symbol,"Action":"MANUAL CLOSE",
+                                    "Price":exit_price,"Amount":f"{pnl_tag} ${pnl:+,.2f} ({pnl_pct:+.2f}%)",
+                                    "Entry Price":entry_price,"Qty":qty_c,
+                                    "P&L $":pnl,"P&L %":pnl_pct,
+                                    "Votes":"manual","Threshold":"manual"})
+                                st.success(f"{p.symbol} closed! P&L: ${pnl:+,.2f} ({pnl_pct:+.2f}%)"); st.rerun()
                             except Exception as e: st.error(f"Failed: {e}")
                     st.markdown("---")
                     if st.button("🔴 Close ALL Positions",type="primary",use_container_width=True):
+                        for p in pos_list:
+                            try:
+                                exit_price=round(float(p.current_price),4)
+                                entry_price=round(float(p.avg_entry_price),4)
+                                pnl_c=round(float(p.unrealized_pl),2)
+                                pnl_pct_c=round(float(p.unrealized_plpc)*100,2)
+                                pnl_tag="🟢 PROFIT" if pnl_c>=0 else "🔴 LOSS"
+                                st.session_state.bot_log.append({
+                                    "Time":datetime.now().strftime("%H:%M:%S"),
+                                    "Asset":p.symbol,"Action":"CLOSE ALL",
+                                    "Price":exit_price,"Amount":f"{pnl_tag} ${pnl_c:+,.2f} ({pnl_pct_c:+.2f}%)",
+                                    "Entry Price":entry_price,"Qty":float(p.qty),
+                                    "P&L $":pnl_c,"P&L %":pnl_pct_c,
+                                    "Votes":"manual","Threshold":"manual"})
+                            except Exception: pass
                         bot_client.close_all_positions(cancel_orders=True)
                         st.success("All positions closed!"); st.rerun()
                 else: st.info("No open positions.")
@@ -1116,7 +1184,25 @@ with tab_bot:
             # ── Bot Trade Log ──
             st.markdown("---"); st.subheader("Bot Trade Log")
             if st.session_state.bot_log:
-                st.dataframe(pd.DataFrame(st.session_state.bot_log),use_container_width=True,hide_index=True)
+                log_df=pd.DataFrame(st.session_state.bot_log)
+                if "P&L $" in log_df.columns:
+                    realized=log_df["P&L $"].dropna()
+                    if not realized.empty:
+                        total_pnl=realized.sum()
+                        wins_n=(realized>0).sum(); losses_n=(realized<0).sum()
+                        p1,p2,p3=st.columns(3)
+                        p1.metric("Session Realized P&L",f"${total_pnl:+,.2f}")
+                        p2.metric("Closed Wins",int(wins_n))
+                        p3.metric("Closed Losses",int(losses_n))
+                    def pnl_color(v):
+                        try:
+                            if pd.isna(v): return ""
+                            return "color:#3fb950;font-weight:bold" if float(v)>=0 else "color:#f85149;font-weight:bold"
+                        except: return ""
+                    st.dataframe(log_df.style.map(pnl_color,subset=["P&L $","P&L %"]),
+                        use_container_width=True,hide_index=True)
+                else:
+                    st.dataframe(log_df,use_container_width=True,hide_index=True)
             else: st.info("No trades this session.")
 
             # ── All Orders ──
@@ -1148,22 +1234,46 @@ with tab_vol:
         with c2:
             if st.button("🔄 Refresh",key="nse_refresh"):
                 fetch_nse_volume_gainers.clear()
+                fetch_in_volume_gainers.clear()
+
+        nse_failed=False
         try:
             with st.spinner("Fetching live NSE data..."):
                 ndf=fetch_nse_volume_gainers()
             if ndf.empty:
-                st.warning("NSE returned no data — market may be closed, or the request was blocked.")
+                nse_failed=True
+                st.warning("NSE returned no data — market may be closed, or the request was blocked. Falling back to tracked-stocks ranking...")
             else:
+                st.success("✅ Live NSE data")
                 st.caption(f"Last fetched: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 st.dataframe(ndf,use_container_width=True,hide_index=True)
                 top=ndf.iloc[0]
                 st.metric(f"🔥 Highest Volume: {top.get('Symbol','—')}",
                           f"{top.get('Volume',0):,.0f} shares")
         except Exception as e:
-            st.error(
-                "Couldn't reach NSE — they frequently block cloud/datacenter IPs "
-                f"(including Streamlit Cloud). Works more reliably run locally.\n\nDetail: {e}"
+            nse_failed=True
+            st.warning(
+                "NSE's live API is blocked from this server (common on Streamlit Cloud — "
+                "NSE blocks cloud/datacenter IPs). Falling back to ranking your tracked "
+                f"Nifty 200 stocks by volume via Yahoo Finance instead.\n\nDetail: {e}"
             )
+
+        if nse_failed:
+            with st.spinner(f"Scanning {len(DEFAULT_IN)} Nifty 200 stocks via yfinance..."):
+                idf=fetch_in_volume_gainers(tuple(DEFAULT_IN))
+            if idf.empty:
+                st.error("Fallback also returned no data — try again in a moment.")
+            else:
+                st.caption(f"Last scanned: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · Fallback source: Yahoo Finance")
+                st.dataframe(idf,use_container_width=True,hide_index=True)
+                top=idf.iloc[0]
+                st.metric(f"🔥 Highest Volume (tracked list): {top['Symbol']}",
+                          f"{top['Volume']:,.0f} shares")
+                st.caption(
+                    "⚠️ This fallback only ranks the 200 NSE stocks already tracked in this "
+                    "app — not the full NSE universe — since direct NSE access is blocked here."
+                )
+
         st.caption(
             "⚠️ NSE's public API isn't officially documented and can change or "
             "block traffic without notice, especially from cloud IPs."
