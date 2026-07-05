@@ -1461,23 +1461,49 @@ with tab_bnh:
                                 .map(bnh_status_color, subset=["Status"]),
                             use_container_width=True, hide_index=True)
 
-                    # ── Normal strategy log for comparison ──
+                    # ── Normal Strategy Trade Log ──
                     st.markdown("---")
-                    st.markdown("### 📋 Normal Strategy Trade Log (for comparison)")
+                    st.markdown("### 📋 Strategy Trade Log (Normal)")
                     if normal_result["log"]:
                         ldf_norm = pd.DataFrame(normal_result["log"])
+                        ldf_norm.rename(columns={"Portfolio": f"Portfolio ({curr_bnh})"}, inplace=True)
                         def nr_color(v):
-                            try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
+                            try: return "color:#3fb950;font-weight:bold" if float(v)>=0 else "color:#f85149"
                             except: return ""
                         def nr_status(v):
                             if v=="OPEN": return "color:#3fb950;font-weight:bold"
                             if v=="CLOSED": return "color:#8b949e"
                             return ""
                         st.dataframe(
-                            ldf_norm.style.map(nr_color, subset=["Return %"]).map(nr_status, subset=["Status"]),
+                            ldf_norm.style
+                                .map(nr_color, subset=["Return %"])
+                                .map(nr_status, subset=["Status"]),
                             use_container_width=True, hide_index=True)
                     else:
                         st.info("No trades triggered by normal strategy.")
+
+                    # ── Smart B&H Trade Log (extra table below) ──
+                    st.markdown("---")
+                    st.markdown("### 💎 Smart B&H Trade Log")
+                    st.caption("🟢 CLOSED ✅ = profit booked | ⚠️ HELD = sell signal ignored (was in loss) | 📊 OPEN = still holding")
+                    if smart_result["log"]:
+                        ldf_bnh2 = pd.DataFrame(smart_result["log"])
+                        ldf_bnh2.rename(columns={"Portfolio": f"Portfolio ({curr_bnh})"}, inplace=True)
+                        def bnh2_ret_color(v):
+                            try: return "color:#3fb950;font-weight:bold" if float(v)>=0 else "color:#f85149"
+                            except: return ""
+                        def bnh2_status_color(v):
+                            if "CLOSED" in str(v): return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
+                            if "HELD" in str(v): return "background-color:#3a3a1a;color:#e3b341;font-weight:bold"
+                            if "OPEN" in str(v): return "color:#58a6ff;font-weight:bold"
+                            return ""
+                        st.dataframe(
+                            ldf_bnh2.style
+                                .map(bnh2_ret_color, subset=["Return %"])
+                                .map(bnh2_status_color, subset=["Status"]),
+                            use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No Smart B&H trades triggered.")
     else:
         st.info("Enter a ticker and click **Run Smart B&H Backtest** above.")
         st.markdown("""
