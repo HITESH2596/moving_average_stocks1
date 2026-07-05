@@ -3,7 +3,6 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import requests
 from datetime import datetime, timedelta
 
 st.set_page_config(layout="wide", page_title="TradeSignal Pro")
@@ -84,18 +83,17 @@ COMMODITY_NAMES = {
     "NG=F":"Natural Gas","HG=F":"Copper","PL=F":"Platinum"
 }
 
-# ── Crypto symbol maps ─────────────────────────────────────────
-# yfinance -> Alpaca order format (BTC/USD)
+# All scannable tickers combined
+ALL_TICKERS = list(dict.fromkeys(DEFAULT_US + DEFAULT_IN + DEFAULT_CR + DEFAULT_CM))
+
 CRYPTO_ORDER_MAP = {
     "BTC-USD":"BTC/USD","ETH-USD":"ETH/USD","SOL-USD":"SOL/USD",
     "BNB-USD":"BNB/USD","XRP-USD":"XRP/USD","ADA-USD":"ADA/USD","DOGE-USD":"DOGE/USD",
 }
-# yfinance -> Alpaca close_position format (BTCUSD)
 CRYPTO_CLOSE_MAP = {
     "BTC-USD":"BTCUSD","ETH-USD":"ETHUSD","SOL-USD":"SOLUSD",
     "BNB-USD":"BNBUSD","XRP-USD":"XRPUSD","ADA-USD":"ADAUSD","DOGE-USD":"DOGEUSD",
 }
-# Alpaca position symbol -> yfinance format
 CRYPTO_POSITION_MAP = {
     "BTCUSD":"BTC-USD","ETHUSD":"ETH-USD","SOLUSD":"SOL-USD",
     "BNBUSD":"BNB-USD","XRPUSD":"XRP-USD","ADAUSD":"ADA-USD","DOGEUSD":"DOGE-USD",
@@ -125,7 +123,8 @@ CHART_INTERVALS = {
 }
 
 for k,v in [("bt_results",[]),("bt_label",""),("bot_bt",[]),
-            ("bot_bt_label",""),("watchlist",[]),("bot_log",[])]:
+            ("bot_bt_label",""),("watchlist",[]),("bot_log",[]),
+            ("perf_compare",[])]:
     if k not in st.session_state:
         st.session_state[k]=v
 
@@ -142,15 +141,12 @@ def ticker_label(t):
 def get_min_votes(t): return MARKET_THRESHOLDS.get(get_market(t),4)
 
 def to_alpaca_order_symbol(ticker):
-    """For placing BUY orders — BTC/USD format"""
     return CRYPTO_ORDER_MAP.get(ticker, ticker)
 
 def to_alpaca_close_symbol(ticker):
-    """For close_position — BTCUSD format (no slash)"""
     return CRYPTO_CLOSE_MAP.get(ticker, ticker)
 
 def normalize_position_symbol(sym):
-    """Convert Alpaca position symbol back to yfinance format"""
     if sym in CRYPTO_POSITION_MAP:
         return CRYPTO_POSITION_MAP[sym]
     return sym
@@ -166,6 +162,12 @@ def sig_color(v):
     if v=="SELL": return "background-color:#3a1a1a;color:#f85149;font-weight:bold"
     if v=="HOLD": return "color:#e3b341"
     return ""
+
+def pct_color(v):
+    try:
+        val=float(str(v).replace("%",""))
+        return "color:#3fb950" if val>=0 else "color:#f85149"
+    except: return ""
 
 def compute_sma(s,w): return s.rolling(w).mean()
 def compute_ema(s,span): return s.ewm(span=span,adjust=False).mean()
@@ -210,9 +212,23 @@ def fetch_data(ticker,interval="1d",days=400):
         return raw
     except Exception: return None
 
+def fetch_data_with_fallback(ticker,interval="1d",days=400):
+    """Try requested interval first, fall back to 1d if insufficient data"""
+    raw=fetch_data(ticker,interval=interval,days=days)
+    if raw is not None and len(raw)>=20:
+        return raw,interval
+    # fallback to daily
+    raw=fetch_data(ticker,interval="1d",days=days)
+    return raw,"1d"
+
 def generate_signals(df,strategy):
     df=df.copy()
     if len(df)<20: return df
+
+    # Ensure Volume exists (fill with 1 if missing — for crypto/commodity)
+    if "Volume" not in df.columns:
+        df["Volume"]=1
+    df["Volume"]=df["Volume"].fillna(1).replace(0,1)
 
     if strategy=="Triple SMA Ribbon (20/50/200)":
         df["SMA20"]=compute_sma(df["Close"],min(20,len(df)))
@@ -286,7 +302,7 @@ def generate_signals(df,strategy):
 
     elif strategy=="VWAP + RSI":
         typ=(df["High"]+df["Low"]+df["Close"])/3
-        vol=df["Volume"] if "Volume" in df.columns else pd.Series(1,index=df.index)
+        vol=df["Volume"]  # already guaranteed above
         df["VWAP"]=(typ*vol).rolling(20).sum()/vol.rolling(20).sum()
         df["RSI"]=compute_rsi(df["Close"],14)
         df["BBUp"],df["BBMid"],df["BBLow"]=compute_bb(df["Close"],20,2)
@@ -393,8 +409,8 @@ def get_multi_tf_consensus(ticker):
         tf=STRATEGY_TF.get(strat,"1d")
         if tf not in tf_cache:
             try:
-                raw=fetch_data(ticker,interval=tf,days=200)
-                tf_cache[tf]=raw if raw is not None and len(raw)>=20 else fetch_data(ticker,interval="1d",days=200)
+                raw,used_tf=fetch_data_with_fallback(ticker,interval=tf,days=200)
+                tf_cache[tf]=raw
             except: tf_cache[tf]=None
     for strat in STRATEGIES:
         tf=STRATEGY_TF.get(strat,"1d"); raw=tf_cache.get(tf)
@@ -408,7 +424,7 @@ def get_multi_tf_consensus(ticker):
 
 def process_ticker(ticker,strategy,days,capital,interval):
     try:
-        raw=fetch_data(ticker,interval=interval,days=days+50)
+        raw,used_tf=fetch_data_with_fallback(ticker,interval=interval,days=days+50)
         if raw is None: return None
         cutoff=datetime.now()-timedelta(days=days)
         sl=raw[raw.index>=pd.to_datetime(cutoff)].copy()
@@ -423,7 +439,7 @@ def process_ticker(ticker,strategy,days,capital,interval):
 def process_bot_ticker_bt(ticker,days,capital):
     try:
         min_votes=get_min_votes(ticker)
-        raw=fetch_data(ticker,interval="1d",days=days+50)
+        raw,_=fetch_data_with_fallback(ticker,interval="1d",days=days+50)
         if raw is None: return None
         cutoff=datetime.now()-timedelta(days=days)
         sl=raw[raw.index>=pd.to_datetime(cutoff)].copy()
@@ -541,90 +557,6 @@ def show_performance(log_t,row,curr,capital):
         st.markdown(f"**Strategy Rating:** <span style='color:{rc};font-size:18px'>{rm.get(score,'⭐⭐⭐')}</span> &nbsp; Score: {score}/5",unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════
-# VOLUME GAINERS — India (NSE live) & US
-# ═══════════════════════════════════════════════════════════════
-NSE_HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.nseindia.com/market-data/volume-gainers-spurts",
-}
-
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_nse_volume_gainers():
-    """Live NSE volume gainers via their internal JSON API.
-    Requires a homepage hit first to obtain session cookies (NSE blocks
-    direct API calls without them). May be blocked from cloud/datacenter IPs."""
-    session = requests.Session()
-    session.headers.update(NSE_HEADERS)
-    session.get("https://www.nseindia.com", timeout=10)
-    resp = session.get("https://www.nseindia.com/api/live-analysis-volume-gainers", timeout=10)
-    resp.raise_for_status()
-    rows = resp.json().get("data", [])
-    df = pd.DataFrame(rows)
-    rmap = {"symbol":"Symbol","series":"Series","totalTradedVolume":"Volume",
-            "ltp":"LTP","perChange":"% Change","weekHighLowAvgVol":"20D Avg Vol",
-            "volumeRatio":"Vol Ratio (x)"}
-    cols = [c for c in rmap if c in df.columns]
-    df = df[cols].rename(columns=rmap)
-    if "Volume" in df.columns:
-        df = df.sort_values("Volume", ascending=False).reset_index(drop=True)
-    return df
-
-@st.cache_data(ttl=120, show_spinner=False)
-def fetch_in_volume_gainers(tickers):
-    """Fallback for when NSE's live API is blocked (e.g. on Streamlit Cloud).
-    Ranks the given .NS tickers by today's volume vs 20-day average, via yfinance."""
-    rows = []
-    for t in tickers:
-        try:
-            df = fetch_data(t, interval="1d", days=30)
-            if df is None or len(df) < 5 or "Volume" not in df.columns:
-                continue
-            today_vol = float(df["Volume"].iloc[-1])
-            avg_vol = float(df["Volume"].iloc[:-1].tail(20).mean())
-            price = float(df["Close"].iloc[-1])
-            pct_chg = (price / float(df["Close"].iloc[-2]) - 1) * 100 if len(df) > 1 else 0.0
-            rows.append({
-                "Symbol": t.replace(".NS", ""), "Price": round(price, 2), "% Change": round(pct_chg, 2),
-                "Volume": int(today_vol), "20D Avg Vol": int(avg_vol),
-                "Vol Ratio (x)": round(today_vol / avg_vol, 2) if avg_vol > 0 else 0,
-            })
-        except Exception:
-            continue
-    df_out = pd.DataFrame(rows)
-    if not df_out.empty:
-        df_out = df_out.sort_values("Volume", ascending=False).reset_index(drop=True)
-    return df_out
-
-@st.cache_data(ttl=120, show_spinner=False)
-def fetch_us_volume_gainers(tickers):
-    """Rank US tickers by today's volume vs 20-day average volume (via yfinance).
-    Not a true market-wide screener — ranks the provided universe only."""
-    rows = []
-    for t in tickers:
-        try:
-            df = fetch_data(t, interval="1d", days=30)
-            if df is None or len(df) < 5 or "Volume" not in df.columns:
-                continue
-            today_vol = float(df["Volume"].iloc[-1])
-            avg_vol = float(df["Volume"].iloc[:-1].tail(20).mean())
-            price = float(df["Close"].iloc[-1])
-            pct_chg = (price / float(df["Close"].iloc[-2]) - 1) * 100 if len(df) > 1 else 0.0
-            rows.append({
-                "Symbol": t, "Price": round(price, 2), "% Change": round(pct_chg, 2),
-                "Volume": int(today_vol), "20D Avg Vol": int(avg_vol),
-                "Vol Ratio (x)": round(today_vol / avg_vol, 2) if avg_vol > 0 else 0,
-            })
-        except Exception:
-            continue
-    df_out = pd.DataFrame(rows)
-    if not df_out.empty:
-        df_out = df_out.sort_values("Volume", ascending=False).reset_index(drop=True)
-    return df_out
-
-# ═══════════════════════════════════════════════════════════════
 # SIDEBAR
 # ═══════════════════════════════════════════════════════════════
 st.sidebar.header("Backtest Settings")
@@ -647,12 +579,12 @@ run_all=st.sidebar.button("🌍 Run ALL Markets",use_container_width=True)
 st.sidebar.caption("⚠️ Nifty 200 & All Markets scans take 5–8 mins")
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🤖 Bot Consensus Backtest")
-st.sidebar.caption("Same logic as the live bot — all 8 strategies, market-specific thresholds")
+st.sidebar.caption("All 8 strategies · market-specific thresholds")
 st.sidebar.markdown("🇺🇸 US=5/8 · 🇮🇳 India=4/8 · 🪙 Crypto=3/8 · 🛢️ Comm=4/8")
 bot_bt_market=st.sidebar.selectbox("Market",["US Stocks","Nifty 50","Nifty 200","Crypto","Commodities","All Markets"],key="bot_bt_market")
 run_bot_bt=st.sidebar.button("Run Bot Backtest",use_container_width=True,key="run_bot_bt")
 
-tab_bt,tab_bot,tab_vol=st.tabs(["📊 Backtester","🤖 Paper Trading Bot","📈 Volume Gainers"])
+tab_bt,tab_bot,tab_compare=st.tabs(["📊 Backtester","🤖 Paper Trading Bot","📈 Performance Compare"])
 
 def do_run(tickers,label):
     with st.spinner(f"Running {label}... ({len(tickers)} assets)"):
@@ -814,7 +746,7 @@ with tab_bt:
     elif bot_rows:
         bot_label=st.session_state.get("bot_bt_label","Bot Consensus Backtest")
         st.markdown(f"## 🤖 {bot_label}")
-        st.caption("Exact same logic as the live bot — all 8 strategies, market-specific thresholds.")
+        st.caption("All 8 strategies · market-specific vote thresholds")
         buy_bt=[r for r in bot_rows if r["Signal"]=="BUY"]
         sell_bt=[r for r in bot_rows if r["Signal"]=="SELL"]
         hold_bt=[r for r in bot_rows if r["Signal"]=="HOLD"]
@@ -824,8 +756,8 @@ with tab_bt:
             st.markdown("### Top BUY Signals")
             st.dataframe(pd.DataFrame([{"Asset":r["Label"],"Market":r["Market"],"Price":fmt(r["Price"]),
                 "Threshold":f"{r['Min Votes']}/8","Buy Votes":r["Buy Votes"],
-                "Strategy %":fmt(r["Net %"],"%"),"B&H %":fmt(r["B&H %"],"%"),
-                "Win Rate":fmt(r["Win Rate"],"%"),"Trades":r["Trades"],"End Value":fmt(r["End Value"])}
+                "Bot Return %":fmt(r["Net %"],"%"),"B&H %":fmt(r["B&H %"],"%"),
+                "Win Rate":fmt(r["Win Rate"],"%"),"Trades":r["Trades"]}
                 for r in buy_bt]),use_container_width=True,hide_index=True)
         st.markdown("### Full Bot Leaderboard")
         mf=st.radio("Filter:",["All","US","India","Crypto","Commodity"],horizontal=True,key="bot_bt_mkt")
@@ -834,7 +766,7 @@ with tab_bt:
             st.dataframe(pd.DataFrame([{"Asset":r["Label"],"Market":r["Market"],"Price":fmt(r["Price"]),
                 "Signal":r["Signal"],"Threshold":f"{r['Min Votes']}/8",
                 "Buy V":r["Buy Votes"],"Sell V":r["Sell Votes"],
-                "Strategy %":fmt(r["Net %"],"%"),"B&H %":fmt(r["B&H %"],"%"),
+                "Bot Return %":fmt(r["Net %"],"%"),"B&H %":fmt(r["B&H %"],"%"),
                 "Win Rate":fmt(r["Win Rate"],"%"),"Trades":r["Trades"]}
                 for r in fd]).style.map(sig_color,subset=["Signal"]),use_container_width=True,hide_index=True)
         st.markdown("### Bot Trade Log")
@@ -872,8 +804,7 @@ with tab_bt:
                 else: st.info("No trades triggered.")
     else:
         st.info("Choose a strategy and period → click a Run button in the sidebar.")
-        st.markdown("**Nifty 50** for a quick scan · **Nifty 200** for a full India scan (5–8 mins)")
-        st.markdown("**Or** click **Run Bot Backtest** to test the consensus bot logic.")
+        st.markdown("**Nifty 50** quick scan · **Nifty 200** full scan · **Run Bot Backtest** for consensus logic")
 
 # ═══════════════════════════════════════════════════════════════
 # TAB 2 — PAPER TRADING BOT
@@ -891,6 +822,7 @@ with tab_bot:
         b1,b2=st.columns(2)
         with b1: api_key=st.text_input("Alpaca API Key",type="password",key="bot_key")
         with b2: api_secret=st.text_input("Alpaca API Secret",type="password",key="bot_secret")
+
     if not api_key or not api_secret:
         st.info("Enter Alpaca Paper Trading keys above.")
         st.markdown("1. Go to [alpaca.markets](https://alpaca.markets)\n2. Paper Trading → API Keys → Generate\n3. Or add to Streamlit Secrets:\n```\nALPACA_KEY = 'your_key'\nALPACA_SECRET = 'your_secret'\n```")
@@ -904,6 +836,15 @@ with tab_bot:
             a2.metric("Cash",f"${float(acct.cash):,.0f}")
             a3.metric("P&L Today",f"${float(acct.equity)-float(acct.last_equity):+,.0f}")
             a4.metric("Buying Power",f"${float(acct.buying_power):,.0f}")
+
+            # ── Load current holdings from Alpaca ──
+            current_holdings={}
+            try:
+                for p in bot_client.get_all_positions():
+                    sym=normalize_position_symbol(p.symbol)
+                    current_holdings[sym]=float(p.qty)
+            except: pass
+
             st.markdown("---"); st.markdown("### Bot Settings")
             s1,s2,s3=st.columns(3)
             with s1: trade_mode=st.radio("Size Mode",["Fixed $","% of Portfolio"],key="trade_mode",horizontal=True)
@@ -914,9 +855,41 @@ with tab_bot:
             allow_short=st.toggle("Allow Short Selling (US Stocks only)",value=False,key="allow_short")
             if allow_short: st.warning("Short selling only works for US stocks on Alpaca.")
             st.info("**Thresholds:** 🇺🇸 US=5/8 · 🇮🇳 India=4/8 · 🪙 Crypto=3/8 · 🛢️ Commodities=4/8")
-            st.caption("🪙 Crypto: orders use BTC/USD, close uses BTCUSD · 🛢️ Commodities: signal only")
-            bot_tickers=st.multiselect("Assets to scan",DEFAULT_US+DEFAULT_CR+DEFAULT_CM,
-                default=["AAPL","NVDA","MSFT","BTC-USD","ETH-USD","GC=F"],format_func=ticker_label,key="bot_tickers")
+            st.caption("🪙 Crypto: BTC/USD for orders, BTCUSD for close · 🛢️ Commodities: signal only (not tradeable)")
+
+            # ── POINT 1 FIX: Asset selector includes ALL tickers + watchlist + current holdings ──
+            # Build label map for display
+            holding_tickers=list(current_holdings.keys())
+            watchlist_tickers=st.session_state.get("watchlist",[])
+            # Combine: all tickers + holdings (in case they were bought outside the app)
+            all_available=list(dict.fromkeys(ALL_TICKERS + holding_tickers + watchlist_tickers))
+
+            def bot_ticker_label(t):
+                base=ticker_label(t)
+                if t in current_holdings:
+                    qty=current_holdings[t]
+                    return f"⭐ {base} (holding {qty:.4f})"
+                if t in watchlist_tickers:
+                    return f"★ {base}"
+                return base
+
+            # Default: watchlist + holdings + a few defaults
+            default_scan=[t for t in holding_tickers]+[t for t in watchlist_tickers if t not in holding_tickers]
+            if not default_scan:
+                default_scan=["AAPL","NVDA","MSFT","BTC-USD","ETH-USD","GC=F"]
+            default_scan=list(dict.fromkeys(default_scan))[:10]
+
+            bot_tickers=st.multiselect(
+                "Assets to scan (⭐ = currently holding, ★ = in watchlist)",
+                options=all_available,
+                default=[t for t in default_scan if t in all_available],
+                format_func=bot_ticker_label,
+                key="bot_tickers")
+
+            if current_holdings:
+                st.markdown("**Currently holding:** " + " · ".join([
+                    f"`{ticker_label(t)}` ({qty:.4f})" for t,qty in current_holdings.items()]))
+
             st.markdown("---")
             c1,c2=st.columns(2)
             with c1: auto_trade=st.toggle("Enable Auto Trading",value=False,key="auto_trade")
@@ -932,29 +905,29 @@ with tab_bot:
                 scan_btn=st.button("🔍 Scan All Timeframes & Execute Trades",type="primary",use_container_width=True)
 
             if scan_btn and bot_tickers:
-                # ── Load positions: normalize ALL crypto formats to yfinance ──
-                positions={}; pos_entry={}
+                # Reload fresh positions
+                positions={}
                 try:
                     for p in bot_client.get_all_positions():
                         sym=normalize_position_symbol(p.symbol)
                         positions[sym]=float(p.qty)
-                        pos_entry[sym]=float(p.avg_entry_price)
                 except: pass
 
-                # ── Load pending orders ──
                 pending=set()
                 try:
                     oo=bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
-                    for o in oo:
-                        pending.add(normalize_position_symbol(o.symbol))
+                    for o in oo: pending.add(normalize_position_symbol(o.symbol))
                 except: pass
 
                 port_val=float(bot_client.get_account().portfolio_value)
                 st.markdown("### Live Multi-Timeframe Scan")
                 prog=st.progress(0); rows=[]
 
-                for i,ticker in enumerate(bot_tickers):
-                    prog.progress((i+1)/len(bot_tickers))
+                # Always include holdings in scan even if not in bot_tickers
+                scan_list=list(dict.fromkeys(bot_tickers+list(positions.keys())))
+
+                for i,ticker in enumerate(scan_list):
+                    prog.progress((i+1)/len(scan_list))
                     try:
                         buy_v,sell_v,detail=get_multi_tf_consensus(ticker)
                         pdf=fetch_data(ticker,interval="1d",days=5)
@@ -962,133 +935,86 @@ with tab_bot:
                         price=float(pdf["Close"].iloc[-1]) if pdf is not None and len(pdf)>0 else 0.0
                         min_v=get_min_votes(ticker)
                         mkt=get_market(ticker)
-                        # Use correct symbol formats per operation
-                        order_sym=to_alpaca_order_symbol(ticker)   # BTC/USD for buying
-                        close_sym=to_alpaca_close_symbol(ticker)   # BTCUSD for closing
+                        order_sym=to_alpaca_order_symbol(ticker)
+                        close_sym=to_alpaca_close_symbol(ticker)
                         action="—"; status="HOLD"
                         already_in=ticker in positions or ticker in pending
                         qty_usd=float(fixed_amt) if trade_mode=="Fixed $" else port_val*(bot_cap_pct/100)
+                        is_holding=ticker in positions and positions[ticker]>0
 
                         if buy_v>=min_v and buy_v>sell_v:
                             status="BUY"
                             pos_qty=positions.get(ticker,0)
-
                             if mkt=="Commodity":
                                 action="Signal only — not tradeable on Alpaca"
-
                             elif pos_qty<0:
-                                # Close existing short using BTCUSD format
                                 try:
-                                    entry_px=pos_entry.get(ticker,price)
-                                    qty_held=abs(pos_qty)
-                                    pnl_dollar=round((entry_px-price)*qty_held,2)
-                                    pnl_pct=round((entry_px-price)/entry_px*100,2) if entry_px else 0.0
-                                    bot_client.close_position(close_sym)
-                                    pnl_tag="🟢 PROFIT" if pnl_dollar>=0 else "🔴 LOSS"
-                                    action=f"CLOSED SHORT — {pnl_tag} ${pnl_dollar:+,.2f} ({pnl_pct:+.2f}%)"
-                                    st.session_state.bot_log.append({
-                                        "Time":datetime.now().strftime("%H:%M:%S"),
+                                    bot_client.close_position(close_sym); action="CLOSED SHORT"
+                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),
                                         "Asset":ticker_label(ticker),"Action":"CLOSE SHORT",
-                                        "Price":round(price,2),"Amount":"full",
-                                        "Entry Price":round(entry_px,4),"Qty":qty_held,
-                                        "P&L $":pnl_dollar,"P&L %":pnl_pct,
-                                        "Votes":f"{buy_v}/8","Threshold":f"{min_v}/8"})
+                                        "Price":round(price,2),"Amount":"full","Votes":f"{buy_v}/8","Threshold":f"{min_v}/8"})
                                 except Exception as e: action=f"Close short failed: {e}"
-
                             elif not already_in and len(positions)<max_pos:
                                 try:
                                     if mkt=="Crypto":
-                                        # Crypto: fractional qty, GTC, BTC/USD symbol
                                         qty=round(qty_usd/price,6) if price>0 else 0
                                         if qty>0:
-                                            bot_client.submit_order(MarketOrderRequest(
-                                                symbol=order_sym,qty=qty,
-                                                side=OrderSide.BUY,
-                                                time_in_force=TimeInForce.GTC))
+                                            bot_client.submit_order(MarketOrderRequest(symbol=order_sym,qty=qty,side=OrderSide.BUY,time_in_force=TimeInForce.GTC))
                                             action=f"BOUGHT {qty} {ticker_label(ticker)} (${qty_usd:.0f})"
                                         else: action="Price unavailable"
                                     else:
-                                        # Stocks: notional dollar amount, DAY order
-                                        bot_client.submit_order(MarketOrderRequest(
-                                            symbol=order_sym,notional=round(qty_usd,2),
-                                            side=OrderSide.BUY,
-                                            time_in_force=TimeInForce.DAY))
+                                        bot_client.submit_order(MarketOrderRequest(symbol=order_sym,notional=round(qty_usd,2),side=OrderSide.BUY,time_in_force=TimeInForce.DAY))
                                         action=f"BOUGHT ${qty_usd:.0f}"
                                     positions[ticker]=1
-                                    st.session_state.bot_log.append({
-                                        "Time":datetime.now().strftime("%H:%M:%S"),
-                                        "Asset":ticker_label(ticker),"Action":"BUY",
-                                        "Price":round(price,2),"Amount":action,
-                                        "Votes":f"{buy_v}/8","Threshold":f"{min_v}/8"})
+                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),
+                                        "Asset":ticker_label(ticker),"Action":"BUY","Price":round(price,2),
+                                        "Amount":action,"Votes":f"{buy_v}/8","Threshold":f"{min_v}/8"})
                                 except Exception as e: action=f"Buy failed: {e}"
-
                             elif already_in: action="Already holding/ordered"
                             else: action="Max positions reached"
 
                         elif sell_v>=min_v and sell_v>buy_v:
                             status="SELL"
-
                             if mkt=="Commodity":
                                 action="Signal only — not tradeable on Alpaca"
-
                             elif ticker in positions and positions[ticker]>0:
-                                # Close long position — use BTCUSD format for crypto
                                 try:
-                                    entry_px=pos_entry.get(ticker,price)
-                                    qty_held=positions[ticker]
-                                    pnl_dollar=round((price-entry_px)*qty_held,2)
-                                    pnl_pct=round((price-entry_px)/entry_px*100,2) if entry_px else 0.0
                                     bot_client.close_position(close_sym)
-                                    pnl_tag="🟢 PROFIT" if pnl_dollar>=0 else "🔴 LOSS"
-                                    action=f"CLOSED LONG — {pnl_tag} ${pnl_dollar:+,.2f} ({pnl_pct:+.2f}%)"
+                                    action="✅ CLOSED LONG — Profit booked"
                                     del positions[ticker]
-                                    st.session_state.bot_log.append({
-                                        "Time":datetime.now().strftime("%H:%M:%S"),
-                                        "Asset":ticker_label(ticker),"Action":"CLOSE LONG",
-                                        "Price":round(price,2),"Amount":"full position",
-                                        "Entry Price":round(entry_px,4),"Qty":qty_held,
-                                        "P&L $":pnl_dollar,"P&L %":pnl_pct,
-                                        "Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
+                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),
+                                        "Asset":ticker_label(ticker),"Action":"CLOSE LONG","Price":round(price,2),
+                                        "Amount":"full position","Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
                                 except Exception as e: action=f"Close failed: {e}"
-
                             elif ticker in positions and positions[ticker]<0:
                                 action="Already short"
-
                             elif allow_short and mkt=="US" and ticker not in pending and len(positions)<max_pos:
                                 try:
                                     shares=max(1,int(qty_usd/price)) if price>0 else 1
                                     dollar_val=round(shares*price,2)
-                                    bot_client.submit_order(MarketOrderRequest(
-                                        symbol=order_sym,qty=shares,
-                                        side=OrderSide.SELL,
-                                        time_in_force=TimeInForce.DAY))
+                                    bot_client.submit_order(MarketOrderRequest(symbol=order_sym,qty=shares,side=OrderSide.SELL,time_in_force=TimeInForce.DAY))
                                     action=f"SHORT {shares} shares (${dollar_val:.0f})"
                                     positions[ticker]=-1
-                                    st.session_state.bot_log.append({
-                                        "Time":datetime.now().strftime("%H:%M:%S"),
-                                        "Asset":ticker_label(ticker),"Action":"SHORT",
-                                        "Price":round(price,2),
-                                        "Amount":f"{shares} shares (~${dollar_val:.0f})",
-                                        "Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
+                                    st.session_state.bot_log.append({"Time":datetime.now().strftime("%H:%M:%S"),
+                                        "Asset":ticker_label(ticker),"Action":"SHORT","Price":round(price,2),
+                                        "Amount":f"{shares} shares (~${dollar_val:.0f})","Votes":f"{sell_v}/8","Threshold":f"{min_v}/8"})
                                 except Exception as e: action=f"Short failed: {e}"
-
                             elif mkt=="Crypto": action="No long to close"
-                            elif allow_short and mkt!="US": action="Short N/A (US only)"
-                            else: action="No long position to close"
+                            else: action="No long to close"
 
+                        holding_qty=positions.get(ticker,0)
                         rows.append({
                             "Asset":ticker_label(ticker),"Market":mkt,
                             "Price":f"${price:,.2f}" if price>0 else "—",
                             "Signal":status,"Threshold":f"{min_v}/8",
                             "Buy Votes":buy_v,"Sell Votes":sell_v,
-                            "Order Symbol":order_sym,"Action":action,
-                            "Holding":"Yes" if ticker in positions else "No"})
+                            "Holding":f"Yes ({holding_qty:.4f})" if holding_qty>0 else "No",
+                            "Action":action})
 
                     except Exception as e:
-                        rows.append({
-                            "Asset":ticker_label(ticker),"Market":"—","Price":"—",
+                        rows.append({"Asset":ticker_label(ticker),"Market":"—","Price":"—",
                             "Signal":"ERROR","Threshold":"—","Buy Votes":0,"Sell Votes":0,
-                            "Order Symbol":"—","Action":str(e),"Holding":"—"})
+                            "Holding":"—","Action":str(e)})
 
                 prog.empty()
                 if rows:
@@ -1104,8 +1030,7 @@ with tab_bot:
                         try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
                         except: return ""
                     st.dataframe(pd.DataFrame([{
-                        "Asset":p.symbol,
-                        "Qty":float(p.qty),
+                        "Asset":p.symbol,"Qty":float(p.qty),
                         "Avg Entry":round(float(p.avg_entry_price),4),
                         "Current":round(float(p.current_price),4),
                         "P&L $":round(float(p.unrealized_pl),2),
@@ -1116,44 +1041,14 @@ with tab_bot:
                     for p in pos_list:
                         c1,c2,c3=st.columns([2,2,1])
                         pnl=round(float(p.unrealized_pl),2)
-                        pnl_pct=round(float(p.unrealized_plpc)*100,2)
                         c1.markdown(f"**{p.symbol}**")
-                        c2.markdown(f"P&L: {'🟢' if pnl>=0 else '🔴'} ${pnl:+.2f} ({pnl_pct:+.2f}%)")
+                        c2.markdown(f"P&L: {'🟢' if pnl>=0 else '🔴'} ${pnl:+.2f}")
                         if c3.button("Close",key=f"close_pos_{p.symbol}",use_container_width=True):
-                            try:
-                                exit_price=round(float(p.current_price),4)
-                                entry_price=round(float(p.avg_entry_price),4)
-                                qty_c=float(p.qty)
-                                bot_client.close_position(p.symbol)
-                                pnl_tag="🟢 PROFIT" if pnl>=0 else "🔴 LOSS"
-                                st.session_state.bot_log.append({
-                                    "Time":datetime.now().strftime("%H:%M:%S"),
-                                    "Asset":p.symbol,"Action":"MANUAL CLOSE",
-                                    "Price":exit_price,"Amount":f"{pnl_tag} ${pnl:+,.2f} ({pnl_pct:+.2f}%)",
-                                    "Entry Price":entry_price,"Qty":qty_c,
-                                    "P&L $":pnl,"P&L %":pnl_pct,
-                                    "Votes":"manual","Threshold":"manual"})
-                                st.success(f"{p.symbol} closed! P&L: ${pnl:+,.2f} ({pnl_pct:+.2f}%)"); st.rerun()
+                            try: bot_client.close_position(p.symbol); st.success(f"{p.symbol} closed!"); st.rerun()
                             except Exception as e: st.error(f"Failed: {e}")
                     st.markdown("---")
                     if st.button("🔴 Close ALL Positions",type="primary",use_container_width=True):
-                        for p in pos_list:
-                            try:
-                                exit_price=round(float(p.current_price),4)
-                                entry_price=round(float(p.avg_entry_price),4)
-                                pnl_c=round(float(p.unrealized_pl),2)
-                                pnl_pct_c=round(float(p.unrealized_plpc)*100,2)
-                                pnl_tag="🟢 PROFIT" if pnl_c>=0 else "🔴 LOSS"
-                                st.session_state.bot_log.append({
-                                    "Time":datetime.now().strftime("%H:%M:%S"),
-                                    "Asset":p.symbol,"Action":"CLOSE ALL",
-                                    "Price":exit_price,"Amount":f"{pnl_tag} ${pnl_c:+,.2f} ({pnl_pct_c:+.2f}%)",
-                                    "Entry Price":entry_price,"Qty":float(p.qty),
-                                    "P&L $":pnl_c,"P&L %":pnl_pct_c,
-                                    "Votes":"manual","Threshold":"manual"})
-                            except Exception: pass
-                        bot_client.close_all_positions(cancel_orders=True)
-                        st.success("All positions closed!"); st.rerun()
+                        bot_client.close_all_positions(cancel_orders=True); st.success("All closed!"); st.rerun()
                 else: st.info("No open positions.")
             except Exception as e: st.error(f"Positions error: {e}")
 
@@ -1162,8 +1057,7 @@ with tab_bot:
             try:
                 open_orders=bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
                 if open_orders:
-                    st.dataframe(pd.DataFrame([{
-                        "Ticker":o.symbol,"Side":o.side.value.upper(),
+                    st.dataframe(pd.DataFrame([{"Ticker":o.symbol,"Side":o.side.value.upper(),
                         "Amount":f"${float(o.notional):.0f}" if o.notional else str(o.qty),
                         "Status":o.status.value,"Time":o.created_at.strftime("%H:%M:%S")}
                         for o in open_orders]),use_container_width=True,hide_index=True)
@@ -1182,39 +1076,19 @@ with tab_bot:
             except Exception as e: st.error(f"Pending orders error: {e}")
 
             # ── Bot Trade Log ──
-            st.markdown("---"); st.subheader("Bot Trade Log")
+            st.markdown("---"); st.subheader("Bot Trade Log (This Session)")
             if st.session_state.bot_log:
-                log_df=pd.DataFrame(st.session_state.bot_log)
-                if "P&L $" in log_df.columns:
-                    realized=log_df["P&L $"].dropna()
-                    if not realized.empty:
-                        total_pnl=realized.sum()
-                        wins_n=(realized>0).sum(); losses_n=(realized<0).sum()
-                        p1,p2,p3=st.columns(3)
-                        p1.metric("Session Realized P&L",f"${total_pnl:+,.2f}")
-                        p2.metric("Closed Wins",int(wins_n))
-                        p3.metric("Closed Losses",int(losses_n))
-                    def pnl_color(v):
-                        try:
-                            if pd.isna(v): return ""
-                            return "color:#3fb950;font-weight:bold" if float(v)>=0 else "color:#f85149;font-weight:bold"
-                        except: return ""
-                    st.dataframe(log_df.style.map(pnl_color,subset=["P&L $","P&L %"]),
-                        use_container_width=True,hide_index=True)
-                else:
-                    st.dataframe(log_df,use_container_width=True,hide_index=True)
+                st.dataframe(pd.DataFrame(st.session_state.bot_log),use_container_width=True,hide_index=True)
             else: st.info("No trades this session.")
 
             # ── All Orders ──
-            st.markdown("---"); st.subheader("All Orders (Alpaca)")
+            st.markdown("---"); st.subheader("All Orders (Alpaca History)")
             try:
                 orders=bot_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL,limit=20))
                 if orders:
-                    st.dataframe(pd.DataFrame([{
-                        "Time":o.created_at.strftime("%Y-%m-%d %H:%M"),
+                    st.dataframe(pd.DataFrame([{"Time":o.created_at.strftime("%Y-%m-%d %H:%M"),
                         "Ticker":o.symbol,"Side":o.side.value.upper(),
-                        "Amount":o.notional or o.qty,
-                        "Status":o.status.value,
+                        "Amount":o.notional or o.qty,"Status":o.status.value,
                         "Fill $":o.filled_avg_price or "—"}
                         for o in orders]),use_container_width=True,hide_index=True)
                 else: st.info("No orders yet.")
@@ -1223,79 +1097,94 @@ with tab_bot:
         except Exception as e: st.error(f"Could not connect to Alpaca: {e}")
 
 # ═══════════════════════════════════════════════════════════════
-# TAB 3 — VOLUME GAINERS (India NSE live + US)
+# TAB 3 — PERFORMANCE COMPARE (Point 2)
 # ═══════════════════════════════════════════════════════════════
-with tab_vol:
-    st.title("📈 Volume Gainers — India & US")
-    vmkt=st.radio("Market",["🇮🇳 India (NSE Live)","🇺🇸 US"],horizontal=True,key="vol_mkt")
+with tab_compare:
+    st.title("📈 Bot vs Strategy vs Buy & Hold Comparison")
+    st.markdown("Run both **Bot Backtest** and **Strategy Backtest** on the same market, then compare here.")
 
-    if vmkt.startswith("🇮🇳"):
-        c1,c2=st.columns([3,1])
-        with c2:
-            if st.button("🔄 Refresh",key="nse_refresh"):
-                fetch_nse_volume_gainers.clear()
-                fetch_in_volume_gainers.clear()
+    bt_res=st.session_state.get("bt_results",[])
+    bot_res=st.session_state.get("bot_bt",[])
 
-        nse_failed=False
-        try:
-            with st.spinner("Fetching live NSE data..."):
-                ndf=fetch_nse_volume_gainers()
-            if ndf.empty:
-                nse_failed=True
-                st.warning("NSE returned no data — market may be closed, or the request was blocked. Falling back to tracked-stocks ranking...")
-            else:
-                st.success("✅ Live NSE data")
-                st.caption(f"Last fetched: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                st.dataframe(ndf,use_container_width=True,hide_index=True)
-                top=ndf.iloc[0]
-                st.metric(f"🔥 Highest Volume: {top.get('Symbol','—')}",
-                          f"{top.get('Volume',0):,.0f} shares")
-        except Exception as e:
-            nse_failed=True
-            st.warning(
-                "NSE's live API is blocked from this server (common on Streamlit Cloud — "
-                "NSE blocks cloud/datacenter IPs). Falling back to ranking your tracked "
-                f"Nifty 200 stocks by volume via Yahoo Finance instead.\n\nDetail: {e}"
-            )
-
-        if nse_failed:
-            with st.spinner(f"Scanning {len(DEFAULT_IN)} Nifty 200 stocks via yfinance..."):
-                idf=fetch_in_volume_gainers(tuple(DEFAULT_IN))
-            if idf.empty:
-                st.error("Fallback also returned no data — try again in a moment.")
-            else:
-                st.caption(f"Last scanned: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · Fallback source: Yahoo Finance")
-                st.dataframe(idf,use_container_width=True,hide_index=True)
-                top=idf.iloc[0]
-                st.metric(f"🔥 Highest Volume (tracked list): {top['Symbol']}",
-                          f"{top['Volume']:,.0f} shares")
-                st.caption(
-                    "⚠️ This fallback only ranks the 200 NSE stocks already tracked in this "
-                    "app — not the full NSE universe — since direct NSE access is blocked here."
-                )
-
-        st.caption(
-            "⚠️ NSE's public API isn't officially documented and can change or "
-            "block traffic without notice, especially from cloud IPs."
-        )
-
+    if not bt_res and not bot_res:
+        st.info("Run a Strategy Backtest AND a Bot Backtest first, then come back here to compare.")
     else:
-        us_universe=st.multiselect(
-            "Tickers to scan",DEFAULT_US,default=DEFAULT_US,key="vol_us_universe"
-        )
-        if st.button("🔍 Scan US Volume",type="primary",key="vol_us_scan"):
-            with st.spinner(f"Scanning {len(us_universe)} US tickers..."):
-                udf=fetch_us_volume_gainers(tuple(us_universe))
-            st.session_state["us_vol_df"]=udf
-        udf=st.session_state.get("us_vol_df",pd.DataFrame())
-        if not udf.empty:
-            st.caption(f"Last scanned: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            st.dataframe(udf,use_container_width=True,hide_index=True)
-            top=udf.iloc[0]
-            st.metric(f"🔥 Highest Volume: {top['Symbol']}",f"{top['Volume']:,.0f} shares")
-        else:
-            st.info("Select tickers and click **Scan US Volume**.")
-        st.caption(
-            "Ranks today's volume vs 20-day average across your selected US watchlist "
-            "(not a market-wide screener — yfinance has no such endpoint)."
-        )
+        # Build comparison table
+        compare_rows=[]
+
+        # All tickers from both results
+        bt_map={r["Ticker"]:r for r in bt_res}
+        bot_map={r["Ticker"]:r for r in bot_res}
+        all_tickers_compare=list(dict.fromkeys(list(bt_map.keys())+list(bot_map.keys())))
+
+        for ticker in all_tickers_compare:
+            bt_r=bt_map.get(ticker)
+            bot_r=bot_map.get(ticker)
+            row={
+                "Asset":ticker_label(ticker),
+                "Market":get_market(ticker),
+                "Price":fmt(bt_r["Price"] if bt_r else (bot_r["Price"] if bot_r else 0)),
+                "Strategy Signal":bt_r["Signal"] if bt_r else "—",
+                "Bot Signal":bot_r["Signal"] if bot_r else "—",
+                "Strategy Return %":bt_r["Net %"] if bt_r else None,
+                "Bot Return %":bot_r["Net %"] if bot_r else None,
+                "Buy & Hold %":bt_r["B&H %"] if bt_r else (bot_r["B&H %"] if bot_r else None),
+                "Strategy Win Rate":fmt(bt_r["Win Rate"],"%") if bt_r else "—",
+                "Bot Win Rate":fmt(bot_r["Win Rate"],"%") if bot_r else "—",
+                "Strategy Trades":bt_r["Trades"] if bt_r else "—",
+                "Bot Trades":bot_r["Trades"] if bot_r else "—",
+            }
+            # Best performer
+            vals={}
+            if row["Strategy Return %"] is not None: vals["Strategy"]=row["Strategy Return %"]
+            if row["Bot Return %"] is not None: vals["Bot"]=row["Bot Return %"]
+            if row["Buy & Hold %"] is not None: vals["B&H"]=row["Buy & Hold %"]
+            row["Best Method"]=max(vals,key=vals.get) if vals else "—"
+            compare_rows.append(row)
+
+        if compare_rows:
+            df_compare=pd.DataFrame(compare_rows)
+
+            # Color formatting
+            def color_return(v):
+                try:
+                    val=float(v)
+                    return "color:#3fb950;font-weight:bold" if val>0 else "color:#f85149"
+                except: return ""
+
+            def color_best(v):
+                if v=="Bot": return "background-color:#1a2a3a;color:#58a6ff;font-weight:bold"
+                if v=="Strategy": return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
+                if v=="B&H": return "color:#e3b341"
+                return ""
+
+            # Market filter
+            mf_c=st.radio("Filter:",["All","US","India","Crypto","Commodity"],horizontal=True,key="compare_mf")
+            if mf_c!="All":
+                df_compare=df_compare[df_compare["Market"]==mf_c]
+
+            st.dataframe(
+                df_compare.style
+                    .map(color_return,subset=["Strategy Return %","Bot Return %","Buy & Hold %"])
+                    .map(sig_color,subset=["Strategy Signal","Bot Signal"])
+                    .map(color_best,subset=["Best Method"]),
+                use_container_width=True,hide_index=True)
+
+            # Summary stats
+            st.markdown("---")
+            st.markdown("### Summary")
+            c1,c2,c3=st.columns(3)
+            strat_wins=sum(1 for r in compare_rows if r["Best Method"]=="Strategy")
+            bot_wins=sum(1 for r in compare_rows if r["Best Method"]=="Bot")
+            bh_wins=sum(1 for r in compare_rows if r["Best Method"]=="B&H")
+            c1.metric("🟢 Strategy wins",f"{strat_wins} assets")
+            c2.metric("🔵 Bot wins",f"{bot_wins} assets")
+            c3.metric("🟡 Buy & Hold wins",f"{bh_wins} assets")
+
+            # Avg returns
+            strat_rets=[r["Strategy Return %"] for r in compare_rows if r["Strategy Return %"] is not None]
+            bot_rets=[r["Bot Return %"] for r in compare_rows if r["Bot Return %"] is not None]
+            bh_rets=[r["Buy & Hold %"] for r in compare_rows if r["Buy & Hold %"] is not None]
+            c1.metric("Avg Strategy Return",f"{round(sum(strat_rets)/len(strat_rets),2)}%" if strat_rets else "—")
+            c2.metric("Avg Bot Return",f"{round(sum(bot_rets)/len(bot_rets),2)}%" if bot_rets else "—")
+            c3.metric("Avg B&H Return",f"{round(sum(bh_rets)/len(bh_rets),2)}%" if bh_rets else "—")
