@@ -848,6 +848,39 @@ with tab_bt:
                 st.dataframe(ldf.style.map(cr,subset=["Return %"]).map(cst,subset=["Status"]),use_container_width=True,hide_index=True)
             else: st.info("No trades triggered.")
 
+            # ── Smart B&H Trade Log (below strategy log) ──
+            st.markdown("---")
+            st.subheader("💎 Smart Buy & Hold Trade Log")
+            st.caption("Same signals — but SELL only executes when position is in profit. Loss exits are skipped and held.")
+            try:
+                smart_bt=run_smart_bnh_backtest(df_plot,capital)
+                smart_log=smart_bt["log"]
+                if smart_log:
+                    ldf_s=pd.DataFrame(smart_log)
+                    ldf_s.rename(columns={"Portfolio":f"Portfolio ({curr})"},inplace=True)
+                    sm1,sm2,sm3,sm4=st.columns(4)
+                    sm1.metric("💎 Smart B&H Return",f"{smart_bt['net_pct']:+.2f}%")
+                    sm2.metric("📈 Strategy Return",f"{row['Net %']:+.2f}%")
+                    sm3.metric("📦 Simple B&H",f"{smart_bt['simple_bnh_pct']:+.2f}%")
+                    sm4.metric("⚠️ Loss Exits Avoided",str(smart_bt["held_count"]))
+                    def sbnh_ret(v):
+                        try: return "color:#3fb950;font-weight:bold" if float(v)>=0 else "color:#f85149"
+                        except: return ""
+                    def sbnh_status(v):
+                        if "CLOSED" in str(v): return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
+                        if "HELD" in str(v): return "background-color:#3a3a1a;color:#e3b341;font-weight:bold"
+                        if "OPEN" in str(v): return "color:#58a6ff;font-weight:bold"
+                        return ""
+                    st.dataframe(
+                        ldf_s.style
+                            .map(sbnh_ret,subset=["Return %"])
+                            .map(sbnh_status,subset=["Status"]),
+                        use_container_width=True,hide_index=True)
+                else:
+                    st.info("No Smart B&H trades triggered.")
+            except Exception as e:
+                st.info(f"Smart B&H could not run: {e}")
+
     elif bot_rows:
         bot_label=st.session_state.get("bot_bt_label","Bot Consensus Backtest")
         st.markdown(f"## 🤖 {bot_label}")
