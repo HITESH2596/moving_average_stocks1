@@ -359,6 +359,111 @@ def run_backtest(df,capital):
             "win_rate":round(win_rate,1),"trades":total,"log":log,
             "last_sig":int(signals[-1]),"last_price":last_price}
 
+def run_smart_bnh_backtest(df, capital):
+    """
+    Smart Buy & Hold:
+    - BUY on buy signal
+    - SELL only when: sell signal AND current position is in PROFIT
+    - If sell signal but in loss → HOLD and wait
+    - Re-enter on next buy signal after a successful exit
+    """
+    log = []
+    in_pos = False
+    entry = 0.0
+    entry_date = ""
+    portfolio = float(capital)
+    wins = total = held_count = 0
+    signals = df["Signal"].values
+    closes = df["Close"].values
+    dates = df.index
+
+    for i in range(len(df)):
+        sig = signals[i]
+        price = closes[i]
+        if price is None or (isinstance(price, float) and np.isnan(price)): continue
+        price = float(price)
+        date = str(dates[i])[:16]
+
+        if sig == 1 and not in_pos:
+            in_pos = True
+            entry = price
+            entry_date = date
+            total += 1
+
+        elif sig == -1 and in_pos:
+            current_ret = (price - entry) / entry
+            if current_ret >= 0:
+                # In profit + sell signal → EXIT
+                in_pos = False
+                portfolio *= (1 + current_ret)
+                wins += 1
+                log.append({
+                    "Status": "CLOSED ✅",
+                    "Entry Date": entry_date,
+                    "Entry Price": round(entry, 4),
+                    "Exit Date": date,
+                    "Exit Price": round(price, 4),
+                    "Return %": round(current_ret * 100, 2),
+                    "Portfolio": round(portfolio, 2),
+                    "Exit Reason": f"Sell signal + profit ({round(current_ret*100,2)}%)"
+                })
+            else:
+                # In loss + sell signal → HOLD, log skipped exit
+                held_count += 1
+                log.append({
+                    "Status": "HELD ⚠️",
+                    "Entry Date": entry_date,
+                    "Entry Price": round(entry, 4),
+                    "Exit Date": date,
+                    "Exit Price": round(price, 4),
+                    "Return %": round(current_ret * 100, 2),
+                    "Portfolio": round(portfolio, 2),
+                    "Exit Reason": f"Sell signal ignored — still {round(current_ret*100,2)}% down"
+                })
+                # Stay in position — do NOT exit
+
+    # Handle open position at end
+    if in_pos:
+        last_v = next(
+            (closes[i] for i in range(len(closes)-1,-1,-1)
+             if closes[i] is not None and not(isinstance(closes[i],float) and np.isnan(closes[i]))),
+            entry)
+        price = float(last_v)
+        current_ret = (price - entry) / entry
+        portfolio *= (1 + current_ret)
+        if price > entry: wins += 1
+        log.append({
+            "Status": "OPEN 📊",
+            "Entry Date": entry_date,
+            "Entry Price": round(entry, 4),
+            "Exit Date": "Present",
+            "Exit Price": round(price, 4),
+            "Return %": round(current_ret * 100, 2),
+            "Portfolio": round(portfolio, 2),
+            "Exit Reason": "Still holding"
+        })
+
+    win_rate = wins / total * 100 if total > 0 else 0.0
+    last_price = float(next(
+        (closes[i] for i in range(len(closes)-1,-1,-1)
+         if closes[i] is not None and not(isinstance(closes[i],float) and np.isnan(closes[i]))),
+        0))
+    valid = df[df["Close"].notna()]
+    first_cl = float(valid["Close"].iloc[0]) if not valid.empty else last_price
+    simple_bnh = round((last_price / first_cl - 1) * 100, 2) if first_cl > 0 else 0.0
+
+    return {
+        "net_pct": round((portfolio / capital - 1) * 100, 2),
+        "simple_bnh_pct": simple_bnh,
+        "end_val": round(portfolio, 2),
+        "win_rate": round(win_rate, 1),
+        "trades": total,
+        "held_count": held_count,
+        "log": log,
+        "last_price": last_price,
+        "last_sig": int(signals[-1])
+    }
+
 def run_bot_backtest_engine(df,capital,min_votes):
     closes=df["Close"].values; dates=df.index; n=len(df)
     all_sigs=[]
@@ -584,7 +689,7 @@ st.sidebar.markdown("🇺🇸 US=5/8 · 🇮🇳 India=4/8 · 🪙 Crypto=3/8 ·
 bot_bt_market=st.sidebar.selectbox("Market",["US Stocks","Nifty 50","Nifty 200","Crypto","Commodities","All Markets"],key="bot_bt_market")
 run_bot_bt=st.sidebar.button("Run Bot Backtest",use_container_width=True,key="run_bot_bt")
 
-tab_bt,tab_bot,tab_compare=st.tabs(["📊 Backtester","🤖 Paper Trading Bot","📈 Performance Compare"])
+tab_bt,tab_bot,tab_compare,tab_bnh=st.tabs(["📊 Backtester","🤖 Paper Trading Bot","📈 Performance Compare","💎 Smart Buy & Hold"])
 
 def do_run(tickers,label):
     with st.spinner(f"Running {label}... ({len(tickers)} assets)"):
@@ -1188,3 +1293,197 @@ with tab_compare:
             c1.metric("Avg Strategy Return",f"{round(sum(strat_rets)/len(strat_rets),2)}%" if strat_rets else "—")
             c2.metric("Avg Bot Return",f"{round(sum(bot_rets)/len(bot_rets),2)}%" if bot_rets else "—")
             c3.metric("Avg B&H Return",f"{round(sum(bh_rets)/len(bh_rets),2)}%" if bh_rets else "—")
+
+# ═══════════════════════════════════════════════════════════════
+# SMART BUY & HOLD BACKTEST ENGINE
+# Rules:
+# - BUY on buy signal
+# - SELL only when: sell signal AND position is in profit
+# - If sell signal but in loss → HOLD, wait for profit + sell signal
+# ═══════════════════════════════════════════════════════════════
+def run_smart_bnh_backtest(df, capital):
+    """Buy & Hold with Smart Exit — never sell in loss"""
+    log = []
+    in_pos = False
+    entry = 0.0
+    entry_date = ""
+    portfolio = float(capital)
+    wins = total = 0
+
+    signals = df["Signal"].values
+    closes = df["Close"].values
+    dates = df.index
+
+    for i in range(len(df)):
+        sig = signals[i]
+        price = closes[i]
+        if price is None or (isinstance(price, float) and np.isnan(price)):
+            continue
+
+# ═══════════════════════════════════════════════════════════════
+# TAB 4 — SMART BUY & HOLD
+# ═══════════════════════════════════════════════════════════════
+with tab_bnh:
+    st.title("💎 Smart Buy & Hold Backtest")
+    st.markdown("""
+    **Rules:**
+    - 🟢 **BUY** when strategy gives a buy signal → enter position
+    - 🔴 **SELL signal + in profit** → exit and book profit
+    - ⚠️ **SELL signal + in loss** → ignore sell, keep holding
+    - 🔁 **Re-enter** on next buy signal after a profitable exit
+    
+    *This simulates a disciplined investor who never panic sells at a loss.*
+    """)
+
+    st.markdown("---")
+    bnh_col1, bnh_col2, bnh_col3 = st.columns(3)
+    with bnh_col1:
+        bnh_ticker_input = st.text_input("Ticker (e.g. AAPL, BTC-USD, RELIANCE.NS, GC=F)",
+                                          value="AAPL", key="bnh_ticker")
+    with bnh_col2:
+        bnh_strategy = st.selectbox("Strategy", STRATEGIES, key="bnh_strategy")
+    with bnh_col3:
+        bnh_period = st.selectbox("Period", list(BACKTEST_PERIODS.keys()), index=1, key="bnh_period")
+
+    bnh_cap = st.number_input("Capital", min_value=1000, value=100000, step=5000, key="bnh_cap")
+    run_bnh = st.button("🚀 Run Smart B&H Backtest", type="primary", use_container_width=True, key="run_bnh")
+
+    if run_bnh and bnh_ticker_input.strip():
+        ticker_raw = bnh_ticker_input.strip().upper()
+        days_bnh = BACKTEST_PERIODS[bnh_period]
+        with st.spinner(f"Running Smart B&H for {ticker_raw}..."):
+            raw_bnh, _ = fetch_data_with_fallback(ticker_raw, interval="1d", days=days_bnh+50)
+            if raw_bnh is None:
+                st.error(f"Could not fetch data for {ticker_raw}")
+            else:
+                cutoff_bnh = datetime.now() - timedelta(days=days_bnh)
+                sl_bnh = raw_bnh[raw_bnh.index >= pd.to_datetime(cutoff_bnh)].copy()
+                if len(sl_bnh) < 30:
+                    st.error("Not enough data for this period.")
+                else:
+                    en_bnh = generate_signals(sl_bnh, bnh_strategy)
+                    smart_result = run_smart_bnh_backtest(en_bnh, bnh_cap)
+                    normal_result = run_backtest(en_bnh, bnh_cap)
+
+                    curr_bnh = "INR" if ticker_raw.endswith(".NS") else "USD"
+
+                    # ── Comparison metrics ──
+                    st.markdown("### 📊 Results Comparison")
+                    c1, c2, c3 = st.columns(3)
+                    sr = smart_result["net_pct"]
+                    nr = normal_result["net_pct"]
+                    bhr = smart_result["simple_bnh_pct"]
+
+                    c1.metric("💎 Smart B&H Return",
+                              f"{sr:+.2f}%",
+                              delta=f"{sr-bhr:+.2f}% vs simple B&H")
+                    c2.metric("📈 Normal Strategy Return",
+                              f"{nr:+.2f}%",
+                              delta=f"{nr-bhr:+.2f}% vs simple B&H")
+                    c3.metric("📦 Simple Buy & Hold",
+                              f"{bhr:+.2f}%",
+                              help="Buy on day 1, hold to today")
+
+                    st.markdown("---")
+                    c4, c5, c6, c7 = st.columns(4)
+                    c4.metric("Smart B&H End Value",
+                              f"{curr_bnh} {smart_result['end_val']:,.0f}")
+                    c5.metric("Win Rate", f"{smart_result['win_rate']}%")
+                    c6.metric("Entries", str(smart_result["trades"]))
+                    c7.metric("Loss Exits Avoided", str(smart_result["held_count"]),
+                              help="Times a sell signal was ignored because position was in loss")
+
+                    # ── Best method banner ──
+                    best_val = max(sr, nr, bhr)
+                    if best_val == sr:
+                        st.success("🏆 Smart B&H outperformed both Normal Strategy and Simple B&H!")
+                    elif best_val == nr:
+                        st.info("📈 Normal Strategy had the highest return this period.")
+                    else:
+                        st.warning("📦 Simple Buy & Hold outperformed both strategies this period.")
+
+                    st.markdown("---")
+
+                    # ── Chart with entries/exits ──
+                    st.markdown("### 📉 Price Chart with Smart B&H Trades")
+                    fig_bnh = go.Figure()
+                    fig_bnh.add_trace(go.Scatter(
+                        x=en_bnh.index, y=en_bnh["Close"],
+                        name="Price", line=dict(color="white", width=1.5)))
+
+                    log_bnh = smart_result["log"]
+                    buy_dates = [t["Entry Date"] for t in log_bnh]
+                    buy_prices = [t["Entry Price"] for t in log_bnh]
+                    sell_dates = [t["Exit Date"] for t in log_bnh if "CLOSED" in t["Status"]]
+                    sell_prices = [t["Exit Price"] for t in log_bnh if "CLOSED" in t["Status"]]
+                    held_dates = [t["Exit Date"] for t in log_bnh if "HELD" in t["Status"]]
+                    held_prices = [t["Exit Price"] for t in log_bnh if "HELD" in t["Status"]]
+
+                    if buy_dates:
+                        fig_bnh.add_trace(go.Scatter(
+                            x=buy_dates, y=buy_prices, mode="markers", name="BUY Entry",
+                            marker=dict(symbol="triangle-up", color="lime", size=12)))
+                    if sell_dates:
+                        fig_bnh.add_trace(go.Scatter(
+                            x=sell_dates, y=sell_prices, mode="markers", name="EXIT (Profit)",
+                            marker=dict(symbol="triangle-down", color="#3fb950", size=12)))
+                    if held_dates:
+                        fig_bnh.add_trace(go.Scatter(
+                            x=held_dates, y=held_prices, mode="markers", name="HELD (Loss avoided)",
+                            marker=dict(symbol="x", color="#e3b341", size=10)))
+
+                    fig_bnh.update_layout(
+                        template="plotly_dark", height=450,
+                        margin=dict(l=20, r=20, t=30, b=20),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_bnh, use_container_width=True)
+
+                    # ── Trade log ──
+                    st.markdown("### 📋 Smart B&H Trade Log")
+                    st.caption("🟢 CLOSED = profit booked | ⚠️ HELD = loss exit avoided | 📊 OPEN = current position")
+                    if log_bnh:
+                        ldf_bnh = pd.DataFrame(log_bnh)
+
+                        def bnh_ret_color(v):
+                            try:
+                                return "color:#3fb950;font-weight:bold" if float(v) >= 0 else "color:#f85149"
+                            except: return ""
+
+                        def bnh_status_color(v):
+                            if "CLOSED" in str(v): return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
+                            if "HELD" in str(v): return "background-color:#3a3a1a;color:#e3b341;font-weight:bold"
+                            if "OPEN" in str(v): return "color:#58a6ff;font-weight:bold"
+                            return ""
+
+                        st.dataframe(
+                            ldf_bnh.style
+                                .map(bnh_ret_color, subset=["Return %"])
+                                .map(bnh_status_color, subset=["Status"]),
+                            use_container_width=True, hide_index=True)
+
+                    # ── Normal strategy log for comparison ──
+                    st.markdown("---")
+                    st.markdown("### 📋 Normal Strategy Trade Log (for comparison)")
+                    if normal_result["log"]:
+                        ldf_norm = pd.DataFrame(normal_result["log"])
+                        def nr_color(v):
+                            try: return "color:#3fb950" if float(v)>=0 else "color:#f85149"
+                            except: return ""
+                        def nr_status(v):
+                            if v=="OPEN": return "color:#3fb950;font-weight:bold"
+                            if v=="CLOSED": return "color:#8b949e"
+                            return ""
+                        st.dataframe(
+                            ldf_norm.style.map(nr_color, subset=["Return %"]).map(nr_status, subset=["Status"]),
+                            use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No trades triggered by normal strategy.")
+    else:
+        st.info("Enter a ticker and click **Run Smart B&H Backtest** above.")
+        st.markdown("""
+        **Example tickers:**
+        - US Stocks: `AAPL`, `NVDA`, `TSLA`
+        - Indian: `RELIANCE.NS`, `TCS.NS`  
+        - Crypto: `BTC-USD`, `ETH-USD`
+        - Commodities: `GC=F` (Gold), `CL=F` (Crude)
+        """)
