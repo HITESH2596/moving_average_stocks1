@@ -689,7 +689,7 @@ st.sidebar.markdown("🇺🇸 US=5/8 · 🇮🇳 India=4/8 · 🪙 Crypto=3/8 ·
 bot_bt_market=st.sidebar.selectbox("Market",["US Stocks","Nifty 50","Nifty 200","Crypto","Commodities","All Markets"],key="bot_bt_market")
 run_bot_bt=st.sidebar.button("Run Bot Backtest",use_container_width=True,key="run_bot_bt")
 
-tab_bt,tab_bot,tab_compare,tab_bnh=st.tabs(["📊 Backtester","🤖 Paper Trading Bot","📈 Performance Compare","💎 Smart Buy & Hold"])
+tab_bt,tab_bot,tab_compare,tab_bnh,tab_smart=st.tabs(["📊 Backtester","🤖 Paper Trading Bot","📈 Performance Compare","💎 Smart Buy & Hold","🐋 Smart Money & Volume"])
 
 def do_run(tickers,label):
     with st.spinner(f"Running {label}... ({len(tickers)} assets)"):
@@ -1545,4 +1545,430 @@ with tab_bnh:
         - Indian: `RELIANCE.NS`, `TCS.NS`  
         - Crypto: `BTC-USD`, `ETH-USD`
         - Commodities: `GC=F` (Gold), `CL=F` (Crude)
+        """)
+
+# ═══════════════════════════════════════════════════════════════
+# TAB 5 — SMART MONEY & VOLUME ANALYSIS
+# Sources: yfinance (volume/price), SEC EDGAR 13F (institutions),
+#          Finviz screener (unusual volume), on-chain (crypto)
+# ═══════════════════════════════════════════════════════════════
+with tab_smart:
+    st.title("🐋 Smart Money & Volume Analysis")
+    st.markdown("Track institutional activity, volume spikes, big investor moves, and whale signals.")
+
+    sm_ticker = st.text_input(
+        "Enter Ticker (US: AAPL, India: RELIANCE.NS, Crypto: BTC-USD)",
+        value="AAPL", key="sm_ticker").strip().upper()
+    sm_run = st.button("🔍 Analyze Smart Money Activity", type="primary", use_container_width=True)
+
+    if sm_run and sm_ticker:
+        mkt = get_market(sm_ticker)
+        st.markdown(f"### Analyzing: **{ticker_label(sm_ticker)}** ({mkt})")
+
+        # ── SECTION 1: VOLUME ANALYSIS ──────────────────────────
+        st.markdown("---")
+        st.markdown("## 📊 Volume & Price Analysis")
+
+        with st.spinner("Fetching price & volume data..."):
+            df_1y, _ = fetch_data_with_fallback(sm_ticker, interval="1d", days=365)
+            df_3m, _ = fetch_data_with_fallback(sm_ticker, interval="1d", days=90)
+
+        if df_1y is not None and "Volume" in df_1y.columns:
+            df_1y = df_1y.copy()
+            df_1y["Volume"] = df_1y["Volume"].fillna(0)
+            avg_vol_30 = df_1y["Volume"].rolling(30).mean()
+            avg_vol_90 = df_1y["Volume"].rolling(90).mean()
+            latest_vol = float(df_1y["Volume"].iloc[-1])
+            avg30 = float(avg_vol_30.iloc[-1]) if not avg_vol_30.empty else 1
+            avg90 = float(avg_vol_90.iloc[-1]) if not avg_vol_90.empty else 1
+            vol_ratio_30 = latest_vol / avg30 if avg30 > 0 else 0
+            vol_ratio_90 = latest_vol / avg90 if avg90 > 0 else 0
+            latest_price = float(df_1y["Close"].iloc[-1])
+            prev_price = float(df_1y["Close"].iloc[-2]) if len(df_1y) > 1 else latest_price
+            price_chg = (latest_price - prev_price) / prev_price * 100
+
+            # Volume spike detection
+            df_1y["Vol_MA30"] = avg_vol_30
+            df_1y["Vol_Ratio"] = df_1y["Volume"] / avg_vol_30
+            spikes = df_1y[df_1y["Vol_Ratio"] >= 2.0].tail(10)
+
+            v1, v2, v3, v4 = st.columns(4)
+            v1.metric("Latest Volume", f"{latest_vol/1e6:.2f}M" if latest_vol > 1e6 else f"{latest_vol:,.0f}")
+            v2.metric("vs 30-Day Avg", f"{vol_ratio_30:.2f}x",
+                      delta="🚨 SPIKE" if vol_ratio_30 >= 2 else ("📈 Above avg" if vol_ratio_30 >= 1.2 else "Normal"))
+            v3.metric("vs 90-Day Avg", f"{vol_ratio_90:.2f}x")
+            v4.metric("Price Change", f"{price_chg:+.2f}%")
+
+            # Volume signal interpretation
+            if vol_ratio_30 >= 2.0 and price_chg > 0:
+                st.success("🐋 **BULLISH VOLUME SPIKE** — High volume + price up = Strong institutional buying")
+            elif vol_ratio_30 >= 2.0 and price_chg < 0:
+                st.error("🔴 **BEARISH VOLUME SPIKE** — High volume + price down = Institutional distribution/selling")
+            elif vol_ratio_30 >= 1.5:
+                st.warning("⚠️ **ELEVATED VOLUME** — Above average activity, watch for direction confirmation")
+            else:
+                st.info("📊 **NORMAL VOLUME** — No unusual institutional activity detected today")
+
+            # Volume chart
+            fig_vol = go.Figure()
+            fig_vol.add_trace(go.Bar(
+                x=df_1y.index, y=df_1y["Volume"],
+                name="Volume",
+                marker_color=["#3fb950" if c >= o else "#f85149"
+                              for c, o in zip(df_1y["Close"], df_1y["Open"])],
+                opacity=0.7))
+            fig_vol.add_trace(go.Scatter(
+                x=df_1y.index, y=df_1y["Vol_MA30"],
+                name="30-Day Avg", line=dict(color="#FFD700", width=1.5, dash="dot")))
+            fig_vol.add_trace(go.Scatter(
+                x=df_1y.index, y=df_1y["Vol_MA30"] * 2,
+                name="2x Avg (Spike Level)", line=dict(color="#FF4444", width=1, dash="dot")))
+            fig_vol.update_layout(template="plotly_dark", height=300,
+                                  title="Volume (Green=Up day, Red=Down day)",
+                                  margin=dict(l=20, r=20, t=40, b=20))
+            st.plotly_chart(fig_vol, use_container_width=True)
+
+            # Recent volume spikes table
+            if not spikes.empty:
+                st.markdown("#### 🚨 Recent Volume Spikes (2x+ Average)")
+                spike_df = spikes[["Close", "Volume", "Vol_Ratio"]].copy()
+                spike_df["Volume"] = spike_df["Volume"].apply(lambda x: f"{x/1e6:.2f}M" if x > 1e6 else f"{x:,.0f}")
+                spike_df["Vol_Ratio"] = spike_df["Vol_Ratio"].apply(lambda x: f"{x:.2f}x avg")
+                spike_df["Price Change"] = df_1y["Close"].pct_change().loc[spikes.index].apply(lambda x: f"{x*100:+.2f}%")
+                spike_df.index = spike_df.index.strftime("%Y-%m-%d")
+                spike_df.columns = ["Close Price", "Volume", "Ratio", "Price Change"]
+                st.dataframe(spike_df, use_container_width=True)
+            else:
+                st.info("No volume spikes (2x+) in the past year.")
+        else:
+            st.warning("Volume data not available for this ticker.")
+
+        # ── SECTION 2: OBV & MONEY FLOW ─────────────────────────
+        st.markdown("---")
+        st.markdown("## 💰 On-Balance Volume (OBV) & Money Flow")
+        st.caption("OBV tracks cumulative buying vs selling pressure. Rising OBV = big money accumulating.")
+
+        if df_1y is not None and "Volume" in df_1y.columns:
+            df_obv = df_1y.copy()
+            obv = [0]
+            for i in range(1, len(df_obv)):
+                if df_obv["Close"].iloc[i] > df_obv["Close"].iloc[i-1]:
+                    obv.append(obv[-1] + df_obv["Volume"].iloc[i])
+                elif df_obv["Close"].iloc[i] < df_obv["Close"].iloc[i-1]:
+                    obv.append(obv[-1] - df_obv["Volume"].iloc[i])
+                else:
+                    obv.append(obv[-1])
+            df_obv["OBV"] = obv
+            df_obv["OBV_MA20"] = df_obv["OBV"].rolling(20).mean()
+
+            # Money Flow Index
+            typical_price = (df_obv["High"] + df_obv["Low"] + df_obv["Close"]) / 3
+            raw_mf = typical_price * df_obv["Volume"]
+            pos_mf = raw_mf.where(typical_price > typical_price.shift(1), 0).rolling(14).sum()
+            neg_mf = raw_mf.where(typical_price < typical_price.shift(1), 0).rolling(14).sum()
+            mfi = 100 - (100 / (1 + pos_mf / neg_mf.replace(0, np.nan)))
+            df_obv["MFI"] = mfi
+
+            latest_obv = float(df_obv["OBV"].iloc[-1])
+            obv_ma = float(df_obv["OBV_MA20"].iloc[-1])
+            latest_mfi = float(df_obv["MFI"].iloc[-1]) if not df_obv["MFI"].empty else 50
+            obv_trend = "📈 Accumulation" if latest_obv > obv_ma else "📉 Distribution"
+
+            o1, o2, o3 = st.columns(3)
+            o1.metric("OBV Trend", obv_trend)
+            o2.metric("Money Flow Index (MFI)", f"{latest_mfi:.1f}",
+                      delta="Overbought" if latest_mfi > 80 else ("Oversold" if latest_mfi < 20 else "Neutral"))
+            o3.metric("OBV vs 20-Day MA", "Above ✅" if latest_obv > obv_ma else "Below ⚠️")
+
+            if latest_mfi > 80:
+                st.warning("⚠️ MFI > 80 — Overbought. Big money may be preparing to exit.")
+            elif latest_mfi < 20:
+                st.success("🐋 MFI < 20 — Oversold. Potential big money accumulation zone.")
+            elif latest_obv > obv_ma and price_chg > 0:
+                st.success("🟢 OBV rising with price — Institutional accumulation confirmed.")
+            elif latest_obv < obv_ma and price_chg < 0:
+                st.error("🔴 OBV falling with price — Institutional distribution detected.")
+
+            fig_obv = go.Figure()
+            fig_obv.add_trace(go.Scatter(x=df_obv.index, y=df_obv["OBV"],
+                name="OBV", line=dict(color="#00FFFF", width=1.5)))
+            fig_obv.add_trace(go.Scatter(x=df_obv.index, y=df_obv["OBV_MA20"],
+                name="OBV 20-MA", line=dict(color="#FFD700", width=1, dash="dot")))
+            fig_obv.update_layout(template="plotly_dark", height=250,
+                title="On-Balance Volume", margin=dict(l=20, r=20, t=40, b=20))
+            st.plotly_chart(fig_obv, use_container_width=True)
+
+        # ── SECTION 3: SEC 13F INSTITUTIONAL HOLDINGS (US only) ──
+        if mkt == "US":
+            st.markdown("---")
+            st.markdown("## 🏦 Institutional Holdings (SEC 13F Filings)")
+            st.caption("13F filings show what hedge funds & institutions bought/sold last quarter.")
+
+            with st.spinner("Fetching institutional data from yfinance..."):
+                try:
+                    tkr_obj = yf.Ticker(sm_ticker)
+                    inst_holders = tkr_obj.institutional_holders
+                    major_holders = tkr_obj.major_holders
+                    mutualfund_holders = tkr_obj.mutualfund_holders
+
+                    if major_holders is not None and not major_holders.empty:
+                        st.markdown("#### 📋 Major Holder Breakdown")
+                        mh_df = major_holders.copy()
+                        mh_df.columns = ["Value", "Description"]
+                        st.dataframe(mh_df, use_container_width=True, hide_index=True)
+
+                    if inst_holders is not None and not inst_holders.empty:
+                        st.markdown("#### 🏦 Top Institutional Holders")
+                        ih = inst_holders.copy()
+                        # Format columns
+                        if "Shares" in ih.columns:
+                            ih["Shares"] = ih["Shares"].apply(lambda x: f"{x/1e6:.2f}M" if x > 1e6 else f"{x:,.0f}")
+                        if "Value" in ih.columns:
+                            ih["Value"] = ih["Value"].apply(lambda x: f"${x/1e9:.2f}B" if x > 1e9 else f"${x/1e6:.2f}M")
+                        if "% Out" in ih.columns:
+                            ih["% Out"] = ih["% Out"].apply(lambda x: f"{x*100:.2f}%" if x < 1 else f"{x:.2f}%")
+                        st.dataframe(ih.head(15), use_container_width=True, hide_index=True)
+
+                        # Total institutional ownership
+                        total_inst = inst_holders["Shares"].str.replace("M","").str.replace(",","").astype(float).sum() if "Shares" in inst_holders.columns else 0
+
+                        st.success(f"🏦 **{len(inst_holders)} institutions** hold this stock")
+
+                    if mutualfund_holders is not None and not mutualfund_holders.empty:
+                        st.markdown("#### 💼 Top Mutual Fund Holders")
+                        mf = mutualfund_holders.copy()
+                        if "Shares" in mf.columns:
+                            mf["Shares"] = mf["Shares"].apply(lambda x: f"{x/1e6:.2f}M" if x > 1e6 else f"{x:,.0f}")
+                        if "Value" in mf.columns:
+                            mf["Value"] = mf["Value"].apply(lambda x: f"${x/1e9:.2f}B" if x > 1e9 else f"${x/1e6:.2f}M")
+                        st.dataframe(mf.head(10), use_container_width=True, hide_index=True)
+
+                    # SEC EDGAR 13F link
+                    st.markdown("---")
+                    st.markdown("#### 🔗 View Full 13F Filings on SEC EDGAR")
+                    edgar_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company={sm_ticker}&type=13F&dateb=&owner=include&count=10"
+                    st.markdown(f"[📄 View {sm_ticker} 13F filings on SEC EDGAR]({edgar_url})")
+                    st.caption("13F filings are submitted quarterly by institutions managing >$100M. Updated 45 days after quarter end.")
+
+                except Exception as e:
+                    st.warning(f"Could not load institutional data: {e}")
+
+        # ── SECTION 4: INDIA — FII/DII ACTIVITY ─────────────────
+        elif mkt == "India":
+            st.markdown("---")
+            st.markdown("## 🇮🇳 FII / DII Institutional Activity")
+            st.caption("Foreign Institutional Investors (FII) and Domestic Institutional Investors (DII) data.")
+
+            try:
+                tkr_obj = yf.Ticker(sm_ticker)
+                inst_holders = tkr_obj.institutional_holders
+                if inst_holders is not None and not inst_holders.empty:
+                    st.markdown("#### 🏦 Top Institutional Holders")
+                    ih = inst_holders.copy()
+                    if "Shares" in ih.columns:
+                        ih["Shares"] = ih["Shares"].apply(lambda x: f"{x/1e6:.2f}M" if x > 1e6 else f"{x:,.0f}")
+                    if "Value" in ih.columns:
+                        ih["Value"] = ih["Value"].apply(lambda x: f"₹{x/1e9:.2f}B" if x > 1e9 else f"₹{x/1e6:.2f}M")
+                    st.dataframe(ih.head(15), use_container_width=True, hide_index=True)
+                else:
+                    st.info("Institutional holder data not available for this Indian stock via yfinance.")
+            except Exception as e:
+                st.warning(f"Could not load data: {e}")
+
+            st.markdown("#### 🔗 Useful FII/DII Data Sources")
+            base = sm_ticker.replace(".NS","")
+            st.markdown(f"""
+            - [NSE India — {base} Shareholding](https://www.nseindia.com/get-quotes/equity?symbol={base})
+            - [BSE India — {base} Shareholding](https://www.bseindia.com/stock-share-price/{base}/)
+            - [Trendlyne FII/DII](https://trendlyne.com/equity/{base}/0/shareholding/)
+            - [Screener.in — {base}](https://www.screener.in/company/{base}/)
+            """)
+
+        # ── SECTION 5: CRYPTO WHALE TRACKING ────────────────────
+        elif mkt == "Crypto":
+            st.markdown("---")
+            st.markdown("## 🐋 Crypto Whale & On-Chain Activity")
+            st.caption("Large wallet movements and exchange flows indicate institutional crypto activity.")
+
+            coin = sm_ticker.replace("-USD","").lower()
+            coin_id_map = {
+                "btc":"bitcoin","eth":"ethereum","sol":"solana",
+                "bnb":"binancecoin","xrp":"ripple","ada":"cardano","doge":"dogecoin"
+            }
+            coin_id = coin_id_map.get(coin, coin)
+
+            st.markdown("#### 🔗 Whale Tracking Resources")
+            st.markdown(f"""
+            | Source | Link | What it shows |
+            |--------|------|---------------|
+            | 🐋 Whale Alert | [whale-alert.io](https://whale-alert.io) | Real-time large crypto transfers |
+            | 📊 Glassnode | [glassnode.com](https://glassnode.com) | On-chain metrics, exchange flows |
+            | 🏦 CryptoQuant | [cryptoquant.com](https://cryptoquant.com/asset/{coin}/chart/exchange-flows) | Exchange inflow/outflow |
+            | 🔍 Nansen | [nansen.ai](https://nansen.ai) | Smart money wallet tracking |
+            | 📈 CoinGlass | [coinglass.com](https://www.coinglass.com/LongShortRatio) | Long/Short ratio, liquidations |
+            """)
+
+            # Fetch CoinGecko data for basic whale indicators
+            with st.spinner("Fetching crypto market data..."):
+                try:
+                    import urllib.request, json
+                    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false"
+                    req = urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        cg_data = json.loads(resp.read())
+
+                    md = cg_data.get("market_data", {})
+                    price_usd = md.get("current_price", {}).get("usd", 0)
+                    mkt_cap = md.get("market_cap", {}).get("usd", 0)
+                    vol_24h = md.get("total_volume", {}).get("usd", 0)
+                    vol_mktcap_ratio = vol_24h / mkt_cap if mkt_cap > 0 else 0
+                    chg_24h = md.get("price_change_percentage_24h", 0)
+                    chg_7d = md.get("price_change_percentage_7d", 0)
+                    chg_30d = md.get("price_change_percentage_30d", 0)
+                    ath = md.get("ath", {}).get("usd", 0)
+                    ath_chg = md.get("ath_change_percentage", {}).get("usd", 0)
+
+                    cg1, cg2, cg3, cg4 = st.columns(4)
+                    cg1.metric("Price", f"${price_usd:,.2f}", delta=f"{chg_24h:+.2f}% 24h")
+                    cg2.metric("Market Cap", f"${mkt_cap/1e9:.2f}B")
+                    cg3.metric("24h Volume", f"${vol_24h/1e9:.2f}B")
+                    cg4.metric("Vol/MCap Ratio", f"{vol_mktcap_ratio:.3f}",
+                               help=">0.1 = high activity, possible whale movement")
+
+                    cg5, cg6, cg7 = st.columns(3)
+                    cg5.metric("7D Change", f"{chg_7d:+.2f}%")
+                    cg6.metric("30D Change", f"{chg_30d:+.2f}%")
+                    cg7.metric("From ATH", f"{ath_chg:+.2f}%", help=f"ATH: ${ath:,.2f}")
+
+                    # Whale signal interpretation
+                    if vol_mktcap_ratio > 0.15 and chg_24h > 2:
+                        st.success("🐋 **HIGH VOLUME + PRICE UP** — Likely whale accumulation / institutional buying")
+                    elif vol_mktcap_ratio > 0.15 and chg_24h < -2:
+                        st.error("🔴 **HIGH VOLUME + PRICE DOWN** — Possible whale distribution / sell-off")
+                    elif vol_mktcap_ratio > 0.10:
+                        st.warning("⚠️ **ELEVATED VOLUME** — Above average crypto activity, monitor closely")
+                    else:
+                        st.info("📊 **NORMAL ACTIVITY** — No unusual whale movement detected")
+
+                except Exception as e:
+                    st.warning(f"CoinGecko data unavailable: {e}")
+                    st.markdown("Try [CoinGecko](https://www.coingecko.com) directly for on-chain data.")
+
+        # ── SECTION 6: FINVIZ UNUSUAL VOLUME SCREENER (US) ──────
+        if mkt == "US":
+            st.markdown("---")
+            st.markdown("## 📡 Unusual Volume Screener (US Market)")
+            st.caption("Stocks with volume 3x+ their average — a key signal of institutional activity.")
+
+            with st.spinner("Scanning for unusual volume across market..."):
+                try:
+                    # Scan DEFAULT_US for unusual volume
+                    unusual = []
+                    scan_list = DEFAULT_US[:30]  # Top 30 for speed
+                    prog_uv = st.progress(0)
+                    for idx_uv, t in enumerate(scan_list):
+                        prog_uv.progress((idx_uv+1)/len(scan_list))
+                        try:
+                            d = fetch_data(t, interval="1d", days=35)
+                            if d is not None and "Volume" in d.columns and len(d) >= 5:
+                                avg_v = float(d["Volume"].iloc[:-1].mean())
+                                last_v = float(d["Volume"].iloc[-1])
+                                last_c = float(d["Close"].iloc[-1])
+                                last_o = float(d["Open"].iloc[-1])
+                                chg = (last_c - float(d["Close"].iloc[-2])) / float(d["Close"].iloc[-2]) * 100
+                                ratio = last_v / avg_v if avg_v > 0 else 0
+                                if ratio >= 1.5:
+                                    unusual.append({
+                                        "Ticker": t,
+                                        "Price": f"${last_c:,.2f}",
+                                        "Change %": round(chg, 2),
+                                        "Volume": f"{last_v/1e6:.2f}M" if last_v > 1e6 else f"{last_v:,.0f}",
+                                        "Avg Volume": f"{avg_v/1e6:.2f}M" if avg_v > 1e6 else f"{avg_v:,.0f}",
+                                        "Vol Ratio": round(ratio, 2),
+                                        "Signal": "🐋 WHALE" if ratio >= 3 else ("🔥 HIGH" if ratio >= 2 else "📈 ABOVE AVG"),
+                                        "Direction": "🟢 UP" if chg > 0 else "🔴 DOWN"
+                                    })
+                        except: pass
+                    prog_uv.empty()
+
+                    if unusual:
+                        unusual.sort(key=lambda x: x["Vol Ratio"], reverse=True)
+                        uv_df = pd.DataFrame(unusual)
+
+                        def uv_sig_color(v):
+                            if "WHALE" in str(v): return "background-color:#1a2a3a;color:#58a6ff;font-weight:bold"
+                            if "HIGH" in str(v): return "background-color:#2a1a1a;color:#f85149;font-weight:bold"
+                            return "color:#e3b341"
+                        def uv_dir_color(v):
+                            return "color:#3fb950;font-weight:bold" if "UP" in str(v) else "color:#f85149;font-weight:bold"
+                        def uv_chg_color(v):
+                            try: return "color:#3fb950" if float(v) >= 0 else "color:#f85149"
+                            except: return ""
+
+                        st.dataframe(
+                            uv_df.style
+                                .map(uv_sig_color, subset=["Signal"])
+                                .map(uv_dir_color, subset=["Direction"])
+                                .map(uv_chg_color, subset=["Change %"]),
+                            use_container_width=True, hide_index=True)
+                        st.caption(f"Scanned {len(scan_list)} US stocks · {len(unusual)} showing elevated volume")
+                    else:
+                        st.info("No unusual volume detected in top US stocks right now.")
+
+                except Exception as e:
+                    st.warning(f"Volume scan error: {e}")
+
+        # ── SECTION 7: PRICE ACTION SUMMARY ─────────────────────
+        st.markdown("---")
+        st.markdown("## 📋 Smart Money Summary")
+
+        if df_1y is not None:
+            close = df_1y["Close"]
+            high_52w = float(close.tail(252).max())
+            low_52w = float(close.tail(252).min())
+            current = float(close.iloc[-1])
+            pct_from_high = (current - high_52w) / high_52w * 100
+            pct_from_low = (current - low_52w) / low_52w * 100
+            sma50 = float(close.rolling(50).mean().iloc[-1]) if len(close) >= 50 else current
+            sma200 = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else current
+
+            ps1, ps2, ps3, ps4 = st.columns(4)
+            ps1.metric("52W High", f"${high_52w:,.2f}" if mkt!="India" else f"₹{high_52w:,.2f}",
+                       delta=f"{pct_from_high:+.2f}% from high")
+            ps2.metric("52W Low", f"${low_52w:,.2f}" if mkt!="India" else f"₹{low_52w:,.2f}",
+                       delta=f"{pct_from_low:+.2f}% from low")
+            ps3.metric("vs SMA 50", f"{'Above ✅' if current > sma50 else 'Below ⚠️'}",
+                       delta=f"{((current-sma50)/sma50*100):+.1f}%")
+            ps4.metric("vs SMA 200", f"{'Above ✅' if current > sma200 else 'Below ⚠️'}",
+                       delta=f"{((current-sma200)/sma200*100):+.1f}%")
+
+            # Overall smart money verdict
+            st.markdown("---")
+            bull_signals = sum([
+                vol_ratio_30 >= 2.0 and price_chg > 0 if df_1y is not None and "Volume" in df_1y.columns else False,
+                current > sma50,
+                current > sma200,
+                latest_obv > obv_ma if df_1y is not None else False,
+                pct_from_low > 10,
+            ])
+            bear_signals = 5 - bull_signals
+
+            if bull_signals >= 4:
+                st.success(f"## 🐋 SMART MONEY VERDICT: ACCUMULATION ({bull_signals}/5 bullish signals)\nInstitutional buying likely in progress.")
+            elif bull_signals >= 3:
+                st.info(f"## 📊 SMART MONEY VERDICT: NEUTRAL-BULLISH ({bull_signals}/5 bullish signals)\nWatch for volume confirmation.")
+            elif bull_signals <= 2:
+                st.error(f"## 🔴 SMART MONEY VERDICT: DISTRIBUTION ({bear_signals}/5 bearish signals)\nInstitutional selling pressure detected.")
+
+    else:
+        st.info("Enter a ticker above and click **Analyze Smart Money Activity**")
+        st.markdown("""
+        **This tab shows:**
+        - 📊 Volume spikes vs 30/90 day averages with chart
+        - 💰 On-Balance Volume (OBV) & Money Flow Index (MFI)
+        - 🏦 SEC 13F institutional holders (US stocks)
+        - 🇮🇳 FII/DII links and holder data (India stocks)
+        - 🐋 Crypto whale signals via CoinGecko (Crypto)
+        - 📡 Unusual volume scanner across top US stocks
+        - 📋 52-week high/low, SMA positioning, overall verdict
         """)
