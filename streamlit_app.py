@@ -15,115 +15,64 @@ try:
 except ImportError:
     ALPACA_AVAILABLE = False
 
+# --- TICKERS ---
 DEFAULT_US = [
-    "AAPL","MSFT","NVDA","GOOGL","GOOG","META","AMZN","TSLA","AMD","NFLX",
-    "JPM","MS","GS","BAC","WFC","C","BLK","AXP","V","MA","PYPL",
-    "JNJ","UNH","PFE","ABBV","MRK","LLY","TMO","ABT","CVS","AMGN",
-    "XOM","CVX","COP","SLB","EOG","MPC","PSX","VLO","OXY","HAL",
-    "WMT","HD","MCD","NKE","SBUX","TGT","COST","LOW","TJX",
-    "BA","CAT","HON","UPS","RTX","LMT","GE","MMM","DE","FDX",
-    "DIS","CMCSA","T","VZ","CHTR","TMUS","SNAP","PINS","UBER","LYFT",
-    "INTC","QCOM","AVGO","TXN","MU","AMAT","LRCX","KLAC","MRVL","SMCI",
-    "CRM","ORCL","ADBE","NOW","SNOW","PLTR","DDOG","ZS","NET","CRWD",
-    "SPY","QQQ","IWM","DIA","XLK","XLF","XLE","XLV","XLI","ARKK",
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA", "AMD", "NFLX",
+    "INTC", "QCOM", "AVGO", "TXN", "MU", "AMAT", "LRCX", "KLAC", "MRVL", "SMCI",
+    "CRM", "ORCL", "ADBE", "NOW", "SNOW", "PLTR", "DDOG", "ZS", "NET", "CRWD",
+    "PANW", "FTNT", "MDB", "TEAM", "PATH", "U", "SHOP", "SQ", "SE", "MELI",
+    "JPM", "MS", "GS", "BAC", "WFC", "C", "BLK", "AXP", "V", "MA", "PYPL", "SCHW", "COIN",
+    "JNJ", "UNH", "PFE", "ABBV", "MRK", "LLY", "TMO", "ABT", "CVS", "AMGN", "GILD", "ISRG", "MODERNA", "BIIB",
+    "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL", "DVN",
+    "WMT", "HD", "MCD", "NKE", "SBUX", "TGT", "COST", "LOW", "TJX", "BKNG", "ABNB", "CMG", "LULU",
+    "BA", "CAT", "HON", "UPS", "RTX", "LMT", "GE", "MMM", "DE", "FDX", "NOC", "GD",
+    "DIS", "CMCSA", "T", "VZ", "CHTR", "TMUS", "SNAP", "PINS", "UBER", "LYFT", "ROKU", "SPOT",
+    "F", "GM", "RIVN", "LCID", "DAL", "UAL", "AAL",
+    "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "XLI", "ARKK", "SOXX", "XBI"
 ]
 DEFAULT_US = list(dict.fromkeys(DEFAULT_US))
 
 DEFAULT_IN_50 = [
-    "RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS",
-    "WIPRO.NS","BAJFINANCE.NS","SBIN.NS","LT.NS","TATAMOTORS.NS",
-    "HINDUNILVR.NS","ASIANPAINT.NS","MARUTI.NS","SUNPHARMA.NS","TITAN.NS",
-    "ULTRACEMCO.NS","NESTLEIND.NS","POWERGRID.NS","NTPC.NS","ONGC.NS",
-    "COALINDIA.NS","HCLTECH.NS","TECHM.NS","AXISBANK.NS","KOTAKBANK.NS",
-    "INDUSINDBK.NS","BHARTIARTL.NS","ITC.NS","DRREDDY.NS","CIPLA.NS",
-    "DIVISLAB.NS","EICHERMOT.NS","HEROMOTOCO.NS","BAJAJ-AUTO.NS","BPCL.NS",
-    "GRASIM.NS","HINDALCO.NS","JSWSTEEL.NS","TATASTEEL.NS","TATACONSUM.NS",
-    "UPL.NS","APOLLOHOSP.NS","ADANIENT.NS","ADANIGREEN.NS","ADANIPORTS.NS",
-    "BAJAJFINSV.NS","BRITANNIA.NS","SBILIFE.NS","HDFCLIFE.NS","M&M.NS",
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
+    "WIPRO.NS", "BAJFINANCE.NS", "SBIN.NS", "LT.NS", "TATAMOTORS.NS",
+    "HINDUNILVR.NS", "ASIANPAINT.NS", "MARUTI.NS", "SUNPHARMA.NS", "TITAN.NS",
+    "ULTRACEMCO.NS", "NESTLEIND.NS", "POWERGRID.NS", "NTPC.NS", "ONGC.NS",
+    "COALINDIA.NS", "HCLTECH.NS", "TECHM.NS", "AXISBANK.NS", "KOTAKBANK.NS",
+    "INDUSINDBK.NS", "BHARTIARTL.NS", "ITC.NS", "DRREDDY.NS", "CIPLA.NS",
+    "DIVISLAB.NS", "EICHERMOT.NS", "HEROMOTOCO.NS", "BAJAJ-AUTO.NS", "BPCL.NS",
+    "GRASIM.NS", "HINDALCO.NS", "JSWSTEEL.NS", "TATASTEEL.NS", "TATACONSUM.NS",
+    "UPL.NS", "APOLLOHOSP.NS", "ADANIENT.NS", "ADANIGREEN.NS", "ADANIPORTS.NS",
+    "BAJAJFINSV.NS", "BRITANNIA.NS", "SBILIFE.NS", "HDFCLIFE.NS", "M&M.NS"
 ]
 
-DEFAULT_IN = DEFAULT_IN_50 + [
-    "AMBUJACEM.NS","AUROPHARMA.NS","BANDHANBNK.NS","BERGEPAINT.NS","BEL.NS",
-    "BOSCHLTD.NS","CANBK.NS","CHOLAFIN.NS","COLPAL.NS","DABUR.NS",
-    "DLF.NS","GAIL.NS","GODREJCP.NS","HAVELLS.NS","HINDPETRO.NS",
-    "ICICIGI.NS","ICICIPRULI.NS","INDUSTOWER.NS","IRCTC.NS","JUBLFOOD.NS",
-    "LICHSGFIN.NS","LUPIN.NS","MARICO.NS","MCDOWELL-N.NS","MUTHOOTFIN.NS",
-    "NAUKRI.NS","NMDC.NS","OFSS.NS","PAGEIND.NS","PIDILITIND.NS",
-    "PNB.NS","RECLTD.NS","SAIL.NS","SHREECEM.NS","SIEMENS.NS",
-    "SRF.NS","TORNTPHARM.NS","TRENT.NS","VEDL.NS","VOLTAS.NS",
-    "ZOMATO.NS","DMART.NS","PIIND.NS","ALKEM.NS","BALKRISIND.NS",
-    "BIOCON.NS","CONCOR.NS","INDIGO.NS","MFSL.NS","MOTHERSON.NS",
-    "ABCAPITAL.NS","ABFRL.NS","AJANTPHARM.NS","APOLLOTYRE.NS","ASHOKLEY.NS",
-    "ASTRAL.NS","ATUL.NS","AUBANK.NS","BAJAJHLDNG.NS",
-    "BATAINDIA.NS","BHEL.NS","BLUEDART.NS","CEATLTD.NS","CROMPTON.NS",
-    "CUMMINSIND.NS","CYIENT.NS","DEEPAKNTR.NS","DIXON.NS","ELGIEQUIP.NS",
-    "ESCORTS.NS","EXIDEIND.NS","FEDERALBNK.NS","FLUOROCHEM.NS",
-    "GLENMARK.NS","GMRINFRA.NS","GNFC.NS","GODREJPROP.NS","GRANULES.NS",
-    "GSPL.NS","GUJGASLTD.NS","HAL.NS","HFCL.NS","HONAUT.NS",
-    "IDFCFIRSTB.NS","IEX.NS","INDHOTEL.NS","INDIANB.NS",
-    "JKCEMENT.NS","JSL.NS","JUBLINGREA.NS","KAJARIACER.NS","KANSAINER.NS",
-    "KEC.NS","LALPATHLAB.NS","LAURUSLABS.NS","LTTS.NS",
-    "LUXIND.NS","MANAPPURAM.NS","MAXHEALTH.NS","MCX.NS",
-    "METROPOLIS.NS","MRF.NS","NATCOPHARM.NS",
-    "NAVINFLUOR.NS","NBCC.NS","NLCINDIA.NS","OBEROIRLTY.NS",
-    "PERSISTENT.NS","PETRONET.NS","PFIZER.NS","PHOENIXLTD.NS","POLYCAB.NS",
-    "PRAJIND.NS","PTC.NS","RAMCOCEM.NS",
-    "RVNL.NS","SBICARD.NS","SCHAEFFLER.NS","SKFINDIA.NS","SOBHA.NS",
-    "SONACOMS.NS","STARHEALTH.NS","SUMICHEM.NS","SUNDARMFIN.NS","SUNDRMFAST.NS",
-    "SUPREMEIND.NS","SYNGENE.NS","TATACHEM.NS","TATACOMM.NS","TATAELXSI.NS",
-    "TATAPOWER.NS","THERMAX.NS","TIMKEN.NS","TTKPRESTIG.NS",
-    "TVSMOTOR.NS","UBLLTD.NS","UNIONBANK.NS",
-    "VBL.NS","WHIRLPOOL.NS","ZEEL.NS","ZYDUSLIFE.NS",
-]
+DEFAULT_CR = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "ADA-USD", "DOGE-USD"]
+DEFAULT_CM = ["GC=F", "SI=F", "CL=F", "NG=F", "HG=F", "PL=F"]
 
-DEFAULT_CR = ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD","ADA-USD","DOGE-USD"]
-DEFAULT_CM = ["GC=F","SI=F","CL=F","NG=F","HG=F","PL=F"]
 COMMODITY_NAMES = {
-    "GC=F":"Gold","SI=F":"Silver","CL=F":"Crude Oil",
-    "NG=F":"Natural Gas","HG=F":"Copper","PL=F":"Platinum"
-}
-
-ALL_TICKERS = list(dict.fromkeys(DEFAULT_US + DEFAULT_IN + DEFAULT_CR + DEFAULT_CM))
-
-CRYPTO_ORDER_MAP = {
-    "BTC-USD":"BTC/USD","ETH-USD":"ETH/USD","SOL-USD":"SOL/USD",
-    "BNB-USD":"BNB/USD","XRP-USD":"XRP/USD","ADA-USD":"ADA/USD","DOGE-USD":"DOGE/USD",
-}
-CRYPTO_CLOSE_MAP = {
-    "BTC-USD":"BTCUSD","ETH-USD":"ETHUSD","SOL-USD":"SOLUSD",
-    "BNB-USD":"BNBUSD","XRP-USD":"XRPUSD","ADA-USD":"ADAUSD","DOGE-USD":"DOGEUSD",
-}
-CRYPTO_POSITION_MAP = {
-    "BTCUSD":"BTC-USD","ETHUSD":"ETH-USD","SOLUSD":"SOL-USD",
-    "BNBUSD":"BNB-USD","XRPUSD":"XRP-USD","ADAUSD":"ADA-USD","DOGEUSD":"DOGE-USD",
-    "BTC/USD":"BTC-USD","ETH/USD":"ETH-USD","SOL/USD":"SOL-USD",
-    "BNB/USD":"BNB-USD","XRP/USD":"XRP-USD","ADA/USD":"ADA-USD","DOGE/USD":"DOGE-USD",
+    "GC=F": "Gold Futures",
+    "SI=F": "Silver Futures",
+    "CL=F": "Crude Oil Futures",
+    "NG=F": "Natural Gas Futures",
+    "HG=F": "Copper Futures",
+    "PL=F": "Platinum Futures"
 }
 
 STRATEGIES = [
-    "Triple SMA Ribbon (20/50/200)","LuxAlgo ATR Channel","MACD Momentum",
-    "EMA 9/21 Ribbon","Smart Money Concepts (SMC)","Supertrend","VWAP + RSI","Ichimoku Cloud",
+    "Triple SMA Ribbon (20/50/200)", "LuxAlgo ATR Channel", "MACD Momentum",
+    "EMA 9/21 Ribbon", "Smart Money Concepts (SMC)", "Supertrend", "VWAP + RSI", "Ichimoku Cloud"
 ]
 
 STRATEGY_TF = {
-    "Triple SMA Ribbon (20/50/200)":"1d","LuxAlgo ATR Channel":"4h",
-    "MACD Momentum":"4h","EMA 9/21 Ribbon":"1h","Smart Money Concepts (SMC)":"4h",
-    "Supertrend":"4h","VWAP + RSI":"1h","Ichimoku Cloud":"1d",
+    "Triple SMA Ribbon (20/50/200)": "1d", "LuxAlgo ATR Channel": "4h",
+    "MACD Momentum": "4h", "EMA 9/21 Ribbon": "1h", "Smart Money Concepts (SMC)": "4h",
+    "Supertrend": "4h", "VWAP + RSI": "1h", "Ichimoku Cloud": "1d"
 }
 
-MARKET_THRESHOLDS = {"US":5,"India":4,"Crypto":3,"Commodity":4}
+MARKET_THRESHOLDS = {"US": 5, "India": 4, "Crypto": 3, "Commodity": 4}
+BACKTEST_PERIODS = {"6 Months": 180, "1 Year": 365, "2 Years": 730, "5 Years": 1825, "10 Years": 3650}
+CHART_INTERVALS = {"15 Minutes": "15m", "1 Hour": "1h", "4 Hours": "4h", "1 Day": "1d"}
 
-BACKTEST_PERIODS = {
-    "6 Months":180,"1 Year":365,"2 Years":730,"5 Years":1825,"10 Years":3650,
-}
-
-CHART_INTERVALS = {
-    "15 Minutes":"15m","1 Hour":"1h","4 Hours":"4h","1 Day":"1d",
-}
-
-for k, v in [("bt_results", []), ("bt_label", ""), ("bot_bt", []),
-            ("bot_bt_label", ""), ("watchlist", []), ("bot_log", []),
-            ("perf_compare", []), ("rec_results", []), ("rec_label", "")]:
+for k, v in [("bt_results", []), ("bt_label", ""), ("watchlist", []), ("rec_results", []), ("rec_label", "")]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -135,26 +84,9 @@ def get_market(t):
 
 def ticker_label(t):
     if t in COMMODITY_NAMES: return COMMODITY_NAMES[t]
-    return t.replace(".NS","").replace("-USD","")
+    return t.replace(".NS", "").replace("-USD", "")
 
-def get_min_votes(t): return MARKET_THRESHOLDS.get(get_market(t),4)
-
-def to_alpaca_order_symbol(ticker):
-    return CRYPTO_ORDER_MAP.get(ticker, ticker)
-
-def to_alpaca_close_symbol(ticker):
-    return CRYPTO_CLOSE_MAP.get(ticker, ticker)
-
-def normalize_position_symbol(sym):
-    if sym in CRYPTO_POSITION_MAP:
-        return CRYPTO_POSITION_MAP[sym]
-    return sym
-
-def fmt(v, suffix=""):
-    if v is None or (isinstance(v, float) and np.isnan(v)): return "—"
-    if suffix == "" and isinstance(v, float): return f"{v:,.2f}"
-    if isinstance(v, float): return f"{v:.2f}{suffix}"
-    return f"{v}{suffix}"
+def get_min_votes(t): return MARKET_THRESHOLDS.get(get_market(t), 4)
 
 def compute_sma(s, w): return s.rolling(w).mean()
 def compute_ema(s, span): return s.ewm(span=span, adjust=False).mean()
@@ -195,42 +127,46 @@ def fetch_data(ticker, interval="1d", days=400):
                           progress=False, auto_adjust=True, group_by="column")
         if raw is None or raw.empty: return None
         raw = clean_df(raw)
-        if "Close" not in raw.columns or len(raw) < 20: return None
+        if "Close" not in raw.columns or len(raw) < 5: return None
         return raw
     except Exception: return None
 
 def fetch_data_with_fallback(ticker, interval="1d", days=400):
     effective_days = min(days, 59) if interval in ["15m"] else min(days, 720) if interval in ["1h", "4h"] else days
     raw = fetch_data(ticker, interval=interval, days=effective_days)
-    if raw is not None and len(raw) >= 20:
+    if raw is not None and len(raw) >= 10:
         return raw, interval
     raw = fetch_data(ticker, interval="1d", days=days)
     return raw, "1d"
 
 def generate_signals(df, strategy):
     df = df.copy()
-    if len(df) < 20: return df
+    if len(df) < 5: return df
 
-    if "Volume" not in df.columns:
-        df["Volume"] = 1
+    if "Volume" not in df.columns: df["Volume"] = 1
     df["Volume"] = df["Volume"].fillna(1).replace(0, 1)
-
     strat = str(strategy).strip()
 
     if "Triple SMA" in strat:
-        df["SMA20"] = compute_sma(df["Close"], min(20, len(df)))
-        df["SMA50"] = compute_sma(df["Close"], min(50, len(df)))
-        df["SMA200"] = compute_sma(df["Close"], min(200, len(df)))
-        buy = (df["SMA20"] > df["SMA50"]) & (df["SMA50"] > df["SMA200"])
-        sell = (df["Close"] < df["SMA50"]) | (df["Close"] < df["SMA200"])
-        df["Signal"] = np.where(buy, 1, np.where(sell, -1, 0))
-        df["Signal"] = df["Signal"].replace(0, np.nan).ffill().fillna(-1)
+        w20 = min(20, len(df))
+        w50 = min(50, len(df))
+        w200 = min(200, len(df))
+        
+        df["SMA20"] = compute_sma(df["Close"], w20)
+        df["SMA50"] = compute_sma(df["Close"], w50)
+        df["SMA200"] = compute_sma(df["Close"], w200)
+        
+        buy_cond = (df["SMA20"] > df["SMA50"]) & (df["SMA50"] > df["SMA200"])
+        sell_cond = (df["SMA20"] < df["SMA50"]) | (df["Close"] < df["SMA200"])
+        
+        df["Signal"] = 0
+        df.loc[buy_cond, "Signal"] = 1
+        df.loc[sell_cond, "Signal"] = -1
 
     elif "EMA 9/21" in strat:
         df["EMA9"] = compute_ema(df["Close"], 9)
         df["EMA21"] = compute_ema(df["Close"], 21)
-        buy = df["EMA9"] > df["EMA21"]
-        df["Signal"] = np.where(buy, 1, -1)
+        df["Signal"] = np.where(df["EMA9"] > df["EMA21"], 1, -1)
 
     elif "LuxAlgo ATR" in strat:
         df["ATR"] = compute_atr(df, 14)
@@ -274,7 +210,6 @@ def generate_signals(df, strategy):
         mb = df["Close"] < sma200
         buy = (bsc >= 3) & (bsc > bsc2); sell = (bsc2 >= 3) & (bsc2 > bsc) & mb
         df["Signal"] = np.where(buy, 1, np.where(sell, -1, 0))
-        df["Signal"] = df["Signal"].replace(0, np.nan).ffill().fillna(-1)
 
     elif "Supertrend" in strat:
         atr_v = compute_atr(df, 10); mult = 3.0
@@ -298,7 +233,6 @@ def generate_signals(df, strategy):
         buy = ((df["Close"] > df["VWAP"]) & (df["RSI"] > 50) & (df["RSI"] < 70)) | ((df["Close"] < df["BBLow"]) & (df["RSI"] < 35))
         sell = ((df["Close"] < df["VWAP"]) & (df["RSI"] < 50) & (df["RSI"] > 30)) | ((df["Close"] > df["BBUp"]) & (df["RSI"] > 65))
         df["Signal"] = np.where(buy, 1, np.where(sell, -1, 0))
-        df["Signal"] = df["Signal"].replace(0, np.nan).ffill().fillna(-1)
 
     elif "Ichimoku" in strat:
         n1, n2, n3 = min(9, max(2, len(df) // 3)), min(26, max(3, len(df) // 2)), min(52, max(4, len(df) - 1))
@@ -311,7 +245,6 @@ def generate_signals(df, strategy):
         tku = (df["Tenkan"] > df["Kijun"]) & (df["Tenkan"].shift(1) <= df["Kijun"].shift(1))
         tkd = (df["Tenkan"] < df["Kijun"]) & (df["Tenkan"].shift(1) >= df["Kijun"].shift(1))
         df["Signal"] = np.where(ac & tku, 1, np.where(bc & tkd, -1, 0))
-        df["Signal"] = df["Signal"].replace(0, np.nan).ffill().fillna(-1)
 
     else:
         df["EMA9"] = compute_ema(df["Close"], 9)
@@ -363,7 +296,7 @@ def process_ticker(ticker, strategy, days, capital, interval):
         actual_cutoff = max(start_date, pd.to_datetime(cutoff))
         
         sl = raw[raw.index >= actual_cutoff].copy()
-        if len(sl) < 20: return None
+        if len(sl) < 5: return None
         
         en = generate_signals(sl, strategy)
         bt = run_backtest(en, capital)
@@ -431,11 +364,6 @@ def draw_chart(df_view, log, strategy_name):
                 fig.add_trace(go.Scatter(x=df_view.index, y=df_view["SpanB"], name="Span B", line=dict(color="#FF4444", width=1)))
                 fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Tenkan"], name="Tenkan", line=dict(color="#00FFFF", width=1, dash="dot")))
                 fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Kijun"], name="Kijun", line=dict(color="#FF00FF", width=1, dash="dot")))
-        elif "Smart Money" in s or "SMC" in s:
-            dv = df_view.reset_index(); dc = dv.columns[0]; n = len(dv)
-            if "Close" in dv.columns:
-                fig.add_trace(go.Scatter(x=dv[dc], y=dv["Close"].rolling(min(50, n)).mean(), name="SMA 50", line=dict(color="#FF8800", width=1, dash="dot")))
-                fig.add_trace(go.Scatter(x=dv[dc], y=dv["Close"].rolling(min(200, n)).mean(), name="SMA 200", line=dict(color="#FF00FF", width=1.5, dash="dot")))
     except: pass
     try:
         bd = [t["Entry Date"] for t in log]; bp = [t["Entry Price"] for t in log]
@@ -453,7 +381,7 @@ selected_strat = st.sidebar.selectbox("Strategy", STRATEGIES)
 rec_tf = STRATEGY_TF.get(selected_strat, "1d")
 st.sidebar.caption(f"Recommended timeframe: `{rec_tf}`")
 
-chart_tf_label = st.sidebar.selectbox("Chart Timeframe", list(CHART_INTERVALS.keys()), index=1)
+chart_tf_label = st.sidebar.selectbox("Chart Timeframe", list(CHART_INTERVALS.keys()), index=3)
 chart_tf = CHART_INTERVALS[chart_tf_label]
 
 backtest_period_label = st.sidebar.selectbox("Backtest Period", list(BACKTEST_PERIODS.keys()), index=1)
@@ -463,14 +391,16 @@ capital_per_asset = st.sidebar.number_input("Capital per Asset", value=100000, s
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Quick Presets")
-run_us = st.sidebar.button("📊 Run US Stocks (100)")
+run_us = st.sidebar.button("📊 Run US Stocks (120+)")
+run_commodities = st.sidebar.button("🛢️ Run Commodities")
+run_crypto = st.sidebar.button("🪙 Run Crypto")
 run_nifty50 = st.sidebar.button("🇮🇳 Run Nifty 50")
-run_nifty200 = st.sidebar.button("🇮🇳 Run Nifty 200")
 
 tickers_to_run = None
 if run_us: tickers_to_run = DEFAULT_US
+elif run_commodities: tickers_to_run = DEFAULT_CM
+elif run_crypto: tickers_to_run = DEFAULT_CR
 elif run_nifty50: tickers_to_run = DEFAULT_IN_50
-elif run_nifty200: tickers_to_run = DEFAULT_IN
 
 if tickers_to_run:
     st.session_state["bt_results"] = run_engine(tickers_to_run, selected_strat, backtest_days, capital_per_asset, chart_tf)
@@ -512,12 +442,12 @@ with tab2:
     
     col_rec1, col_rec2 = st.columns([2, 1])
     with col_rec1:
-        rec_market = st.selectbox("Select Market", ["US Stocks", "Nifty 50", "Crypto", "Commodities"])
+        rec_market = st.selectbox("Select Market", ["US Stocks (120+)", "Commodities", "Crypto", "Nifty 50"])
     with col_rec2:
         run_rec = st.button("🚀 Generate Recommendations")
         
     if run_rec:
-        rec_list = DEFAULT_US if rec_market == "US Stocks" else DEFAULT_IN_50 if rec_market == "Nifty 50" else DEFAULT_CR if rec_market == "Crypto" else DEFAULT_CM
+        rec_list = DEFAULT_US if "US" in rec_market else DEFAULT_CM if rec_market == "Commodities" else DEFAULT_CR if rec_market == "Crypto" else DEFAULT_IN_50
         rec_results = []
         prog = st.progress(0); status = st.empty()
         
@@ -580,7 +510,11 @@ with tab3:
                 client = TradingClient(api_key, secret_key, paper=paper_mode)
                 account = client.get_account()
                 
-                st.success("Connected to Alpaca (" + ("Paper" if paper_mode else "Live") + ") - Cash: $" + f"{float(account.cash):,.2f}" + " - Equity: $" + f"{float(account.portfolio_value):,.2f}")
+                c_val = float(account.cash)
+                e_val = float(account.portfolio_value)
+                mode_str = "Paper" if paper_mode else "Live"
+                st.success(f"Connected to Alpaca ({mode_str}) | Cash: ${c_val:,.2f} \vert{} Equity:${e_val:,.2f}")
+                
                 positions = client.get_all_positions()
                 if positions:
                     pos_data = []
@@ -606,7 +540,7 @@ with tab4:
     
     col_w1, col_w2 = st.columns([3, 1])
     with col_w1:
-        new_ticker = st.text_input("Add Ticker to Watchlist (e.g. TSLA, BTC-USD, RELIANCE.NS):").upper()
+        new_ticker = st.text_input("Add Ticker to Watchlist (e.g. TSLA, GC=F, BTC-USD, RELIANCE.NS):").upper()
     with col_w2:
         if st.button("Add Ticker") and new_ticker:
             if new_ticker not in st.session_state["watchlist"]:
