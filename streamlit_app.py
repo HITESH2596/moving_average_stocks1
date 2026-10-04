@@ -580,10 +580,7 @@ with tab3:
                 client = TradingClient(api_key, secret_key, paper=paper_mode)
                 account = client.get_account()
                 
-                st.success(f"Connected to Alpaca ({'Paper' if paper_mode else 'Live'}) | Cash: ${float(account.cash):,.2f} \vert{} Equity:${float(account.portfolio_value):,.2f}")
-                
-                # Fetch positions
-                positions = client.get_all_positions()
+                st.success("Connected to Alpaca (" + ("Paper" if paper_mode else "Live") + ") - Cash: $" + f"{float(account.cash):,.2f}" + " - Equity: $" + f"{float(account.portfolio_value):,.2f}")positions = client.get_all_positions()
                 if positions:
                     pos_data = []
                     for p in positions:
