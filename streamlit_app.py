@@ -13,7 +13,7 @@ try:
 except ImportError:
     ALPACA_AVAILABLE = False
 
-# --- TICKERS ---
+# --- TICKERS MASTER LIST ---
 DEFAULT_US = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA", "AMD", "NFLX",
     "INTC", "QCOM", "AVGO", "TXN", "MU", "AMAT", "LRCX", "KLAC", "MRVL", "SMCI",
@@ -45,6 +45,9 @@ DEFAULT_IN_50 = [
 
 DEFAULT_CR = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "ADA-USD", "DOGE-USD"]
 DEFAULT_CM = ["GC=F", "SI=F", "CL=F", "NG=F", "HG=F", "PL=F"]
+
+# Unified list for auto-suggest selection
+ALL_TICKERS = list(dict.fromkeys(DEFAULT_US + DEFAULT_IN_50 + DEFAULT_CR + DEFAULT_CM))
 
 COMMODITY_NAMES = {
     "GC=F": "Gold Futures",
@@ -547,7 +550,13 @@ with tab4:
     
     col_st1, col_st2 = st.columns([3, 1])
     with col_st1:
-        perf_ticker = st.text_input("Enter Ticker Symbol to Check Performance Across All Strategies:", value="AAPL").upper()
+        # Searchable drop-down selectbox with typing autocomplete capability
+        perf_ticker = st.selectbox(
+            "Type or Select Stock Ticker to Check Performance Across All Strategies:",
+            options=ALL_TICKERS,
+            index=ALL_TICKERS.index("AAPL") if "AAPL" in ALL_TICKERS else 0,
+            help="Start typing any ticker or stock symbol (e.g. MSFT, RELIANCE.NS, BTC-USD, GC=F) to filter options."
+        )
     with col_st2:
         run_perf_btn = st.button("Evaluate All Strategies")
         
@@ -577,7 +586,11 @@ with tab4:
     st.subheader("📌 Custom Asset Watchlist")
     col_w1, col_w2 = st.columns([3, 1])
     with col_w1:
-        new_ticker = st.text_input("Add Ticker to Watchlist (e.g. TSLA, GC=F, BTC-USD, RELIANCE.NS):").upper()
+        new_ticker = st.selectbox(
+            "Select Ticker to Add to Watchlist:",
+            options=ALL_TICKERS,
+            index=0
+        )
     with col_w2:
         if st.button("Add Ticker") and new_ticker:
             if new_ticker not in st.session_state["watchlist"]:
