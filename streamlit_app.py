@@ -9,8 +9,6 @@ st.set_page_config(layout="wide", page_title="TradeSignal Pro", initial_sidebar_
 
 try:
     from alpaca.trading.client import TradingClient
-    from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
-    from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
     ALPACA_AVAILABLE = True
 except ImportError:
     ALPACA_AVAILABLE = False
@@ -148,10 +146,7 @@ def generate_signals(df, strategy):
     strat = str(strategy).strip()
 
     if "Triple SMA" in strat:
-        w20 = min(20, len(df))
-        w50 = min(50, len(df))
-        w200 = min(200, len(df))
-        
+        w20, w50, w200 = min(20, len(df)), min(50, len(df)), min(200, len(df))
         df["SMA20"] = compute_sma(df["Close"], w20)
         df["SMA50"] = compute_sma(df["Close"], w50)
         df["SMA200"] = compute_sma(df["Close"], w200)
@@ -411,7 +406,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Backtester Engine", 
     "🤖 Recommendation Engine", 
     "⚡ Alpaca Trading Bot", 
-    "📊 Performance & Watchlist"
+    "📊 Strategy Performance"
 ])
 
 # ==================== TAB 1: BACKTESTER ====================
@@ -425,13 +420,23 @@ with tab1:
         cols = ["Ticker", "Label", "Market", "Price", "Signal", "Net %", "B&H %", "Win Rate", "Trades", "End Value"]
         st.dataframe(res_df[cols], use_container_width=True)
         
-        selected_ticker = st.selectbox("Select Asset to View Chart & Details", res_df["Ticker"].tolist())
+        selected_ticker = st.selectbox("Select Asset to View Chart & Historical Trades Log", res_df["Ticker"].tolist())
         match_row = next((r for r in st.session_state["bt_results"] if r["Ticker"] == selected_ticker), None)
         
         if match_row:
             st.plotly_chart(draw_chart(match_row["_df"], match_row["_log"], selected_strat), use_container_width=True)
-            st.subheader("Trade Log")
-            st.dataframe(pd.DataFrame(match_row["_log"]), use_container_width=True)
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Net Gain / Loss %", f"{match_row['Net %']}%")
+            c2.metric("Buy & Hold %", f"{match_row['B&H %']}%")
+            c3.metric("Win Rate %", f"{match_row['Win Rate']}%")
+            c4.metric("Total Historical Trades", match_row["Trades"])
+            
+            st.subheader("Historical Trades Log")
+            if match_row["_log"]:
+                st.dataframe(pd.DataFrame(match_row["_log"]), use_container_width=True)
+            else:
+                st.info("No completed historical trades generated in this timeframe.")
     else:
         st.info("Select a preset from the sidebar to launch a backtest across assets.")
 
@@ -535,10 +540,41 @@ with tab3:
             except Exception as e:
                 st.error(f"Alpaca Connection Failed: {str(e)}")
 
-# ==================== TAB 4: WATCHLIST & PERFORMANCE ====================
+# ==================== TAB 4: STRATEGY PERFORMANCE & WATCHLIST ====================
 with tab4:
-    st.title("📊 Watchlist & Strategy Comparison")
+    st.title("📊 Multi-Strategy Performance Comparison")
+    st.caption("Compare all 8 technical strategies side-by-side on any stock over past historical performance.")
     
+    col_st1, col_st2 = st.columns([3, 1])
+    with col_st1:
+        perf_ticker = st.text_input("Enter Ticker Symbol to Check Performance Across All Strategies:", value="AAPL").upper()
+    with col_st2:
+        run_perf_btn = st.button("Evaluate All Strategies")
+        
+    if run_perf_btn and perf_ticker:
+        perf_rows = []
+        with st.spinner(f"Running historical backtests for {perf_ticker}..."):
+            for st_name in STRATEGIES:
+                row = process_ticker(perf_ticker, st_name, backtest_days, capital_per_asset, chart_tf)
+                if row:
+                    perf_rows.append({
+                        "Strategy": st_name,
+                        "Current Signal": row["Signal"],
+                        "Net Return %": row["Net %"],
+                        "Buy & Hold %": row["B&H %"],
+                        "Win Rate %": row["Win Rate"],
+                        "Total Trades": row["Trades"],
+                        "Final Value ($)": row["End Value"]
+                    })
+        if perf_rows:
+            perf_df = pd.DataFrame(perf_rows).sort_values(by="Net Return %", ascending=False)
+            st.subheader(f"Performance Comparison Matrix: {perf_ticker} ({backtest_period_label})")
+            st.dataframe(perf_df, use_container_width=True)
+        else:
+            st.warning(f"Could not retrieve historical data for {perf_ticker}.")
+            
+    st.markdown("---")
+    st.subheader("📌 Custom Asset Watchlist")
     col_w1, col_w2 = st.columns([3, 1])
     with col_w1:
         new_ticker = st.text_input("Add Ticker to Watchlist (e.g. TSLA, GC=F, BTC-USD, RELIANCE.NS):").upper()
@@ -549,7 +585,6 @@ with tab4:
                 st.success(f"Added {new_ticker}")
 
     if st.session_state["watchlist"]:
-        st.subheader("Your Custom Watchlist")
         wl_data = []
         for t in st.session_state["watchlist"]:
             raw, _ = fetch_data_with_fallback(t, interval="1d", days=30)
