@@ -514,7 +514,7 @@ with tab3:
                 e_val = float(account.portfolio_value)
                 mode_str = "Paper" if paper_mode else "Live"
                 st.success(f"Connected to Alpaca ({mode_str})")
-                st.info(f"Cash: ${c_val:,.2f} \vert{} Equity:${e_val:,.2f}")
+                st.info(f"Cash: ${c_val:,.2f}  --  Equity:${e_val:,.2f}")
                 
                 positions = client.get_all_positions()
                 if positions:
