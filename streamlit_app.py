@@ -5,7 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-st.set_page_config(layout="wide", page_title="TradeSignal Pro")
+st.set_page_config(layout="wide", page_title="TradeSignal Pro", initial_sidebar_state="expanded")
 
 try:
     from alpaca.trading.client import TradingClient
@@ -121,11 +121,11 @@ CHART_INTERVALS = {
     "15 Minutes":"15m","1 Hour":"1h","4 Hours":"4h","1 Day":"1d",
 }
 
-for k,v in [("bt_results",[]),("bt_label",""),("bot_bt",[]),
-            ("bot_bt_label",""),("watchlist",[]),("bot_log",[]),
-            ("perf_compare",[])]:
+for k, v in [("bt_results", []), ("bt_label", ""), ("bot_bt", []),
+            ("bot_bt_label", ""), ("watchlist", []), ("bot_log", []),
+            ("perf_compare", []), ("rec_results", []), ("rec_label", "")]:
     if k not in st.session_state:
-        st.session_state[k]=v
+        st.session_state[k] = v
 
 def get_market(t):
     if t.endswith(".NS"): return "India"
@@ -150,74 +150,60 @@ def normalize_position_symbol(sym):
         return CRYPTO_POSITION_MAP[sym]
     return sym
 
-def fmt(v,suffix=""):
-    if v is None or (isinstance(v,float) and np.isnan(v)): return "—"
-    if suffix=="" and isinstance(v,float): return f"{v:,.2f}"
-    if isinstance(v,float): return f"{v:.2f}{suffix}"
+def fmt(v, suffix=""):
+    if v is None or (isinstance(v, float) and np.isnan(v)): return "—"
+    if suffix == "" and isinstance(v, float): return f"{v:,.2f}"
+    if isinstance(v, float): return f"{v:.2f}{suffix}"
     return f"{v}{suffix}"
 
-def sig_color(v):
-    if v=="BUY": return "background-color:#1a3a1a;color:#3fb950;font-weight:bold"
-    if v=="SELL": return "background-color:#3a1a1a;color:#f85149;font-weight:bold"
-    if v=="HOLD": return "color:#e3b341"
-    return ""
+def compute_sma(s, w): return s.rolling(w).mean()
+def compute_ema(s, span): return s.ewm(span=span, adjust=False).mean()
 
-def pct_color(v):
-    try:
-        val=float(str(v).replace("%",""))
-        return "color:#3fb950" if val>=0 else "color:#f85149"
-    except: return ""
+def compute_atr(df, p=14):
+    hl = df["High"] - df["Low"]
+    hcp = (df["High"] - df["Close"].shift(1)).abs()
+    lcp = (df["Low"] - df["Close"].shift(1)).abs()
+    return pd.concat([hl, hcp, lcp], axis=1).max(axis=1).rolling(p).mean()
 
-def compute_sma(s,w): return s.rolling(w).mean()
-def compute_ema(s,span): return s.ewm(span=span,adjust=False).mean()
+def compute_rsi(s, p=14):
+    d = s.diff(); g = d.clip(lower=0).rolling(p).mean(); l = (-d.clip(upper=0)).rolling(p).mean()
+    return 100 - (100 / (1 + g / l.replace(0, np.nan)))
 
-def compute_atr(df,p=14):
-    hl=df["High"]-df["Low"]
-    hcp=(df["High"]-df["Close"].shift(1)).abs()
-    lcp=(df["Low"]-df["Close"].shift(1)).abs()
-    return pd.concat([hl,hcp,lcp],axis=1).max(axis=1).rolling(p).mean()
-
-def compute_rsi(s,p=14):
-    d=s.diff(); g=d.clip(lower=0).rolling(p).mean(); l=(-d.clip(upper=0)).rolling(p).mean()
-    return 100-(100/(1+g/l.replace(0,np.nan)))
-
-def compute_bb(s,w=20,n=2):
-    mid=s.rolling(w).mean(); std=s.rolling(w).std()
-    return mid+n*std,mid,mid-n*std
+def compute_bb(s, w=20, n=2):
+    mid = s.rolling(w).mean(); std = s.rolling(w).std()
+    return mid + n * std, mid, mid - n * std
 
 def clean_df(raw):
-    if isinstance(raw.columns,pd.MultiIndex):
-        raw.columns=["_".join([str(c) for c in col]).strip() for col in raw.columns]
-        rmap={}
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = ["_".join([str(c) for c in col]).strip() for col in raw.columns]
+        rmap = {}
         for col in raw.columns:
-            for std in ["Close","Open","High","Low","Volume"]:
-                if col.startswith(std): rmap[col]=std
-        raw.rename(columns=rmap,inplace=True)
-    raw.columns=[str(c).strip() for c in raw.columns]
-    raw.index=pd.to_datetime(raw.index)
-    if "Close" in raw.columns: raw=raw.dropna(subset=["Close"])
+            for std in ["Close", "Open", "High", "Low", "Volume"]:
+                if col.startswith(std): rmap[col] = std
+        raw.rename(columns=rmap, inplace=True)
+    raw.columns = [str(c).strip() for c in raw.columns]
+    raw.index = pd.to_datetime(raw.index)
+    if "Close" in raw.columns: raw = raw.dropna(subset=["Close"])
     return raw
 
-def fetch_data(ticker,interval="1d",days=400):
+def fetch_data(ticker, interval="1d", days=400):
     try:
-        end_dt=datetime.now()
-        max_days=min(days,59) if interval in ["1h","15m"] else min(days,720) if interval=="4h" else days
-        start_dt=end_dt-timedelta(days=max_days)
-        raw=yf.download(ticker,start=start_dt,end=end_dt,interval=interval,
-                        progress=False,auto_adjust=True,group_by="column")
+        end_dt = datetime.now()
+        max_days = min(days, 59) if interval in ["1h", "15m"] else min(days, 720) if interval == "4h" else days
+        start_dt = end_dt - timedelta(days=max_days)
+        raw = yf.download(ticker, start=start_dt, end=end_dt, interval=interval,
+                          progress=False, auto_adjust=True, group_by="column")
         if raw is None or raw.empty: return None
-        raw=clean_df(raw)
-        if "Close" not in raw.columns or len(raw)<20: return None
+        raw = clean_df(raw)
+        if "Close" not in raw.columns or len(raw) < 20: return None
         return raw
     except Exception: return None
 
-def fetch_data_with_fallback(ticker,interval="1d",days=400):
-    """Try requested interval first with valid bounds, fallback to 1d if insufficient data"""
+def fetch_data_with_fallback(ticker, interval="1d", days=400):
     effective_days = min(days, 59) if interval in ["15m"] else min(days, 720) if interval in ["1h", "4h"] else days
     raw = fetch_data(ticker, interval=interval, days=effective_days)
     if raw is not None and len(raw) >= 20:
         return raw, interval
-    # fallback to daily
     raw = fetch_data(ticker, interval="1d", days=days)
     return raw, "1d"
 
@@ -335,37 +321,37 @@ def generate_signals(df, strategy):
     if "Signal" not in df.columns: df["Signal"] = 0
     return df
 
-def run_backtest(df,capital):
-    log,in_pos,entry,portfolio,wins,total=[],False,0.0,float(capital),0,0
-    entry_date=""
-    signals=df["Signal"].values; closes=df["Close"].values; dates=df.index
+def run_backtest(df, capital):
+    log, in_pos, entry, portfolio, wins, total = [], False, 0.0, float(capital), 0, 0
+    entry_date = ""
+    signals = df["Signal"].values; closes = df["Close"].values; dates = df.index
     for i in range(len(df)):
-        sig=signals[i]; price=closes[i]
-        if price is None or (isinstance(price,float) and np.isnan(price)): continue
-        price=float(price); date=str(dates[i])[:16]
-        if sig==1 and not in_pos:
-            in_pos,entry,entry_date,total=True,price,date,total+1
-        elif sig==-1 and in_pos:
-            in_pos=False; ret=(price-entry)/entry; portfolio*=(1+ret)
-            if price>entry: wins+=1
-            log.append({"Status":"CLOSED","Entry Date":entry_date,"Entry Price":round(entry,4),
-                        "Exit Date":date,"Exit Price":round(price,4),"Return %":round(ret*100,2),"Portfolio":round(portfolio,2)})
+        sig = signals[i]; price = closes[i]
+        if price is None or (isinstance(price, float) and np.isnan(price)): continue
+        price = float(price); date = str(dates[i])[:16]
+        if sig == 1 and not in_pos:
+            in_pos, entry, entry_date, total = True, price, date, total + 1
+        elif sig == -1 and in_pos:
+            in_pos = False; ret = (price - entry) / entry; portfolio *= (1 + ret)
+            if price > entry: wins += 1
+            log.append({"Status": "CLOSED", "Entry Date": entry_date, "Entry Price": round(entry, 4),
+                        "Exit Date": date, "Exit Price": round(price, 4), "Return %": round(ret * 100, 2), "Portfolio": round(portfolio, 2)})
     if in_pos:
-        last_v=next((closes[i] for i in range(len(closes)-1,-1,-1)
-                     if closes[i] is not None and not(isinstance(closes[i],float) and np.isnan(closes[i]))),entry)
-        price=float(last_v); ret=(price-entry)/entry; portfolio*=(1+ret)
-        if price>entry: wins+=1
-        log.append({"Status":"OPEN","Entry Date":entry_date,"Entry Price":round(entry,4),
-                    "Exit Date":"Present","Exit Price":round(price,4),"Return %":round(ret*100,2),"Portfolio":round(portfolio,2)})
-    win_rate=wins/total*100 if total>0 else 0.0
-    last_price=float(next((closes[i] for i in range(len(closes)-1,-1,-1)
-                           if closes[i] is not None and not(isinstance(closes[i],float) and np.isnan(closes[i]))),0))
-    valid=df[df["Close"].notna()]
-    first_cl=float(valid["Close"].iloc[0]) if not valid.empty else last_price
-    bh_pct=round((last_price/first_cl-1)*100,2) if first_cl>0 else 0.0
-    return {"net_pct":round((portfolio/capital-1)*100,2),"bh_pct":bh_pct,"end_val":round(portfolio,2),
-            "win_rate":round(win_rate,1),"trades":total,"log":log,
-            "last_sig":int(signals[-1]) if len(signals)>0 else 0,"last_price":last_price}
+        last_v = next((closes[i] for i in range(len(closes) - 1, -1, -1)
+                      if closes[i] is not None and not(isinstance(closes[i], float) and np.isnan(closes[i]))), entry)
+        price = float(last_v); ret = (price - entry) / entry; portfolio *= (1 + ret)
+        if price > entry: wins += 1
+        log.append({"Status": "OPEN", "Entry Date": entry_date, "Entry Price": round(entry, 4),
+                    "Exit Date": "Present", "Exit Price": round(price, 4), "Return %": round(ret * 100, 2), "Portfolio": round(portfolio, 2)})
+    win_rate = wins / total * 100 if total > 0 else 0.0
+    last_price = float(next((closes[i] for i in range(len(closes) - 1, -1, -1)
+                            if closes[i] is not None and not(isinstance(closes[i], float) and np.isnan(closes[i]))), 0))
+    valid = df[df["Close"].notna()]
+    first_cl = float(valid["Close"].iloc[0]) if not valid.empty else last_price
+    bh_pct = round((last_price / first_cl - 1) * 100, 2) if first_cl > 0 else 0.0
+    return {"net_pct": round((portfolio / capital - 1) * 100, 2), "bh_pct": bh_pct, "end_val": round(portfolio, 2),
+            "win_rate": round(win_rate, 1), "trades": total, "log": log,
+            "last_sig": int(signals[-1]) if len(signals) > 0 else 0, "last_price": last_price}
 
 def process_ticker(ticker, strategy, days, capital, interval):
     try:
@@ -399,74 +385,73 @@ def process_ticker(ticker, strategy, days, capital, interval):
     except Exception:
         return None
 
-def run_engine(tickers,strategy,days,capital,interval):
-    results=[]; prog=st.progress(0); status=st.empty()
-    for idx,ticker in enumerate(tickers):
-        prog.progress((idx+1)/len(tickers))
-        status.caption(f"Processing {ticker_label(ticker)} ({idx+1}/{len(tickers)})...")
-        row=process_ticker(ticker,strategy,days,capital,interval)
+def run_engine(tickers, strategy, days, capital, interval):
+    results = []; prog = st.progress(0); status = st.empty()
+    for idx, ticker in enumerate(tickers):
+        prog.progress((idx + 1) / len(tickers))
+        status.caption(f"Processing {ticker_label(ticker)} ({idx + 1}/{len(tickers)})...")
+        row = process_ticker(ticker, strategy, days, capital, interval)
         if row: results.append(row)
     prog.empty(); status.empty()
-    results.sort(key=lambda x:x["Net %"] if x["Net %"] is not None and not(isinstance(x["Net %"],float) and np.isnan(x["Net %"])) else -999,reverse=True)
+    results.sort(key=lambda x: x["Net %"] if x["Net %"] is not None and not(isinstance(x["Net %"], float) and np.isnan(x["Net %"])) else -999, reverse=True)
     return results
 
-def draw_chart(df_view,log,strategy_name):
-    df_view=df_view.copy()
-    if isinstance(df_view.index,pd.MultiIndex): df_view.index=df_view.index.get_level_values(0)
-    df_view.index=pd.to_datetime(df_view.index)
-    fig=go.Figure()
-    try: fig.add_trace(go.Scatter(x=df_view.index,y=df_view["Close"],name="Price",line=dict(color="white",width=1.5)))
+def draw_chart(df_view, log, strategy_name):
+    df_view = df_view.copy()
+    if isinstance(df_view.index, pd.MultiIndex): df_view.index = df_view.index.get_level_values(0)
+    df_view.index = pd.to_datetime(df_view.index)
+    fig = go.Figure()
+    try: fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Close"], name="Price", line=dict(color="white", width=1.5)))
     except: pass
-    s=strategy_name
+    s = strategy_name
     try:
         if "Triple SMA" in s:
-            for col,color,nm in [("SMA20","#00FFFF","SMA 20"),("SMA50","#FFD700","SMA 50"),("SMA200","#FF00FF","SMA 200")]:
-                if col in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index,y=df_view[col],name=nm,line=dict(color=color,width=1)))
+            for col, color, nm in [("SMA20", "#00FFFF", "SMA 20"), ("SMA50", "#FFD700", "SMA 50"), ("SMA200", "#FF00FF", "SMA 200")]:
+                if col in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index, y=df_view[col], name=nm, line=dict(color=color, width=1)))
         elif "LuxAlgo ATR" in s:
-            if "Band" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index,y=df_view["Band"],name="ATR Band",line=dict(color="lime",width=1.5,dash="dot")))
+            if "Band" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Band"], name="ATR Band", line=dict(color="lime", width=1.5, dash="dot")))
         elif "MACD" in s:
-            if "MACD" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index,y=df_view["MACD"],name="MACD",line=dict(color="#00FFFF",width=1)))
-            if "MACDSig" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index,y=df_view["MACDSig"],name="Signal",line=dict(color="#FF00FF",width=1,dash="dot")))
+            if "MACD" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index, y=df_view["MACD"], name="MACD", line=dict(color="#00FFFF", width=1)))
+            if "MACDSig" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index, y=df_view["MACDSig"], name="Signal", line=dict(color="#FF00FF", width=1, dash="dot")))
         elif "EMA 9/21" in s:
-            if "EMA9" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index,y=df_view["EMA9"],name="EMA 9",line=dict(color="#00FF88",width=1)))
-            if "EMA21" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index,y=df_view["EMA21"],name="EMA 21",line=dict(color="#FF8800",width=1)))
+            if "EMA9" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index, y=df_view["EMA9"], name="EMA 9", line=dict(color="#00FF88", width=1)))
+            if "EMA21" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index, y=df_view["EMA21"], name="EMA 21", line=dict(color="#FF8800", width=1)))
         elif "Supertrend" in s:
             if "ST_Upper" in df_view.columns:
-                fig.add_trace(go.Scatter(x=df_view.index,y=df_view["ST_Upper"],name="ST Resist",line=dict(color="#FF4444",width=1.5,dash="dot")))
-                fig.add_trace(go.Scatter(x=df_view.index,y=df_view["ST_Lower"],name="ST Support",line=dict(color="#44FF44",width=1.5,dash="dot")))
+                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["ST_Upper"], name="ST Resist", line=dict(color="#FF4444", width=1.5, dash="dot")))
+                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["ST_Lower"], name="ST Support", line=dict(color="#44FF44", width=1.5, dash="dot")))
         elif "VWAP" in s:
-            if "VWAP" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index,y=df_view["VWAP"],name="VWAP",line=dict(color="#FFD700",width=1.5)))
+            if "VWAP" in df_view.columns: fig.add_trace(go.Scatter(x=df_view.index, y=df_view["VWAP"], name="VWAP", line=dict(color="#FFD700", width=1.5)))
             if "BBUp" in df_view.columns:
-                fig.add_trace(go.Scatter(x=df_view.index,y=df_view["BBUp"],name="BB Upper",line=dict(color="#FF8800",width=1,dash="dot")))
-                fig.add_trace(go.Scatter(x=df_view.index,y=df_view["BBLow"],name="BB Lower",line=dict(color="#FF8800",width=1,dash="dot")))
+                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBUp"], name="BB Upper", line=dict(color="#FF8800", width=1, dash="dot")))
+                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["BBLow"], name="BB Lower", line=dict(color="#FF8800", width=1, dash="dot")))
         elif "Ichimoku" in s:
             if "SpanA" in df_view.columns:
-                fig.add_trace(go.Scatter(x=df_view.index,y=df_view["SpanA"],name="Span A",line=dict(color="#00FF88",width=1)))
-                fig.add_trace(go.Scatter(x=df_view.index,y=df_view["SpanB"],name="Span B",line=dict(color="#FF4444",width=1)))
-                fig.add_trace(go.Scatter(x=df_view.index,y=df_view["Tenkan"],name="Tenkan",line=dict(color="#00FFFF",width=1,dash="dot")))
-                fig.add_trace(go.Scatter(x=df_view.index,y=df_view["Kijun"],name="Kijun",line=dict(color="#FF00FF",width=1,dash="dot")))
+                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["SpanA"], name="Span A", line=dict(color="#00FF88", width=1)))
+                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["SpanB"], name="Span B", line=dict(color="#FF4444", width=1)))
+                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Tenkan"], name="Tenkan", line=dict(color="#00FFFF", width=1, dash="dot")))
+                fig.add_trace(go.Scatter(x=df_view.index, y=df_view["Kijun"], name="Kijun", line=dict(color="#FF00FF", width=1, dash="dot")))
         elif "Smart Money" in s or "SMC" in s:
-            dv=df_view.reset_index(); dc=dv.columns[0]; n=len(dv)
+            dv = df_view.reset_index(); dc = dv.columns[0]; n = len(dv)
             if "Close" in dv.columns:
-                fig.add_trace(go.Scatter(x=dv[dc],y=dv["Close"].rolling(min(50,n)).mean(),name="SMA 50",line=dict(color="#FF8800",width=1,dash="dot")))
-                fig.add_trace(go.Scatter(x=dv[dc],y=dv["Close"].rolling(min(200,n)).mean(),name="SMA 200",line=dict(color="#FF00FF",width=1.5,dash="dot")))
+                fig.add_trace(go.Scatter(x=dv[dc], y=dv["Close"].rolling(min(50, n)).mean(), name="SMA 50", line=dict(color="#FF8800", width=1, dash="dot")))
+                fig.add_trace(go.Scatter(x=dv[dc], y=dv["Close"].rolling(min(200, n)).mean(), name="SMA 200", line=dict(color="#FF00FF", width=1.5, dash="dot")))
     except: pass
     try:
-        bd=[t["Entry Date"] for t in log]; bp=[t["Entry Price"] for t in log]
-        sd=[t["Exit Date"] for t in log if t["Status"]=="CLOSED"]; sp=[t["Exit Price"] for t in log if t["Status"]=="CLOSED"]
-        if bd: fig.add_trace(go.Scatter(x=bd,y=bp,mode="markers",name="BUY",marker=dict(symbol="triangle-up",color="lime",size=10)))
-        if sd: fig.add_trace(go.Scatter(x=sd,y=sp,mode="markers",name="SELL",marker=dict(symbol="triangle-down",color="red",size=10)))
+        bd = [t["Entry Date"] for t in log]; bp = [t["Entry Price"] for t in log]
+        sd = [t["Exit Date"] for t in log if t["Status"] == "CLOSED"]; sp = [t["Exit Price"] for t in log if t["Status"] == "CLOSED"]
+        if bd: fig.add_trace(go.Scatter(x=bd, y=bp, mode="markers", name="BUY", marker=dict(symbol="triangle-up", color="lime", size=10)))
+        if sd: fig.add_trace(go.Scatter(x=sd, y=sp, mode="markers", name="SELL", marker=dict(symbol="triangle-down", color="red", size=10)))
     except: pass
-    fig.update_layout(template="plotly_dark",height=450,margin=dict(l=20,r=20,t=30,b=20),
-                      legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
+    fig.update_layout(template="plotly_dark", height=450, margin=dict(l=20, r=20, t=30, b=20),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     return fig
 
-# --- Sidebar UI Controls ---
-st.sidebar.title("Backtest Settings")
+# --- Sidebar Controls ---
+st.sidebar.title("⚙️ Controls")
 selected_strat = st.sidebar.selectbox("Strategy", STRATEGIES)
-
 rec_tf = STRATEGY_TF.get(selected_strat, "1d")
-st.sidebar.caption(f"Recommended timeframe: {rec_tf}")
+st.sidebar.caption(f"Recommended timeframe: `{rec_tf}`")
 
 chart_tf_label = st.sidebar.selectbox("Chart Timeframe", list(CHART_INTERVALS.keys()), index=1)
 chart_tf = CHART_INTERVALS[chart_tf_label]
@@ -476,9 +461,11 @@ backtest_days = BACKTEST_PERIODS[backtest_period_label]
 
 capital_per_asset = st.sidebar.number_input("Capital per Asset", value=100000, step=10000)
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("Quick Presets")
 run_us = st.sidebar.button("📊 Run US Stocks (100)")
-run_nifty50 = st.sidebar.button("🇮🇳 Run Nifty 50 (Fast)")
-run_nifty200 = st.sidebar.button("🇮🇳 Run Nifty 200 (5–8 mins)")
+run_nifty50 = st.sidebar.button("🇮🇳 Run Nifty 50")
+run_nifty200 = st.sidebar.button("🇮🇳 Run Nifty 200")
 
 tickers_to_run = None
 if run_us: tickers_to_run = DEFAULT_US
@@ -489,21 +476,159 @@ if tickers_to_run:
     st.session_state["bt_results"] = run_engine(tickers_to_run, selected_strat, backtest_days, capital_per_asset, chart_tf)
     st.session_state["bt_label"] = f"{selected_strat} ({backtest_period_label})"
 
-st.title("Global Multi-Market Backtester Pro")
+# --- MAIN APP TABS ---
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📈 Backtester Engine", 
+    "🤖 Recommendation Engine", 
+    "⚡ Alpaca Trading Bot", 
+    "📊 Performance & Watchlist"
+])
 
-if st.session_state["bt_results"]:
-    res_df = pd.DataFrame(st.session_state["bt_results"])
-    st.subheader(f"Results for {st.session_state['bt_label']}")
+# ==================== TAB 1: BACKTESTER ====================
+with tab1:
+    st.title("Global Backtest Analysis Engine")
     
-    display_cols = ["Ticker", "Label", "Market", "Price", "Signal", "Net %", "B&H %", "Win Rate", "Trades", "End Value"]
-    st.dataframe(res_df[display_cols], use_container_width=True)
+    if st.session_state["bt_results"]:
+        res_df = pd.DataFrame(st.session_state["bt_results"])
+        st.subheader(f"Results: {st.session_state['bt_label']}")
+        
+        cols = ["Ticker", "Label", "Market", "Price", "Signal", "Net %", "B&H %", "Win Rate", "Trades", "End Value"]
+        st.dataframe(res_df[cols], use_container_width=True)
+        
+        selected_ticker = st.selectbox("Select Asset to View Chart & Details", res_df["Ticker"].tolist())
+        match_row = next((r for r in st.session_state["bt_results"] if r["Ticker"] == selected_ticker), None)
+        
+        if match_row:
+            st.plotly_chart(draw_chart(match_row["_df"], match_row["_log"], selected_strat), use_container_width=True)
+            st.subheader("Trade Log")
+            st.dataframe(pd.DataFrame(match_row["_log"]), use_container_width=True)
+    else:
+        st.info("Select a preset from the sidebar to launch a backtest across assets.")
+
+# ==================== TAB 2: RECOMMENDATION ENGINE ====================
+with tab2:
+    st.title("🤖 Multi-Strategy Recommendation Engine")
+    st.caption("Evaluates consensus signals across all 8 strategies to issue STRONG BUY / BUY / HOLD / SELL calls.")
     
-    selected_ticker = st.selectbox("Select Asset to View Chart & Details", res_df["Ticker"].tolist())
-    match_row = next((r for r in st.session_state["bt_results"] if r["Ticker"] == selected_ticker), None)
+    col_rec1, col_rec2 = st.columns([2, 1])
+    with col_rec1:
+        rec_market = st.selectbox("Select Market", ["US Stocks", "Nifty 50", "Crypto", "Commodities"])
+    with col_rec2:
+        run_rec = st.button("🚀 Generate Recommendations")
+        
+    if run_rec:
+        rec_list = DEFAULT_US if rec_market == "US Stocks" else DEFAULT_IN_50 if rec_market == "Nifty 50" else DEFAULT_CR if rec_market == "Crypto" else DEFAULT_CM
+        rec_results = []
+        prog = st.progress(0); status = st.empty()
+        
+        for idx, ticker in enumerate(rec_list):
+            prog.progress((idx + 1) / len(rec_list))
+            status.caption(f"Analyzing {ticker_label(ticker)} across all 8 strategies...")
+            
+            raw, _ = fetch_data_with_fallback(ticker, interval="1d", days=300)
+            if raw is None or raw.empty: continue
+            
+            buy_votes, sell_votes = 0, 0
+            for strat in STRATEGIES:
+                df_sig = generate_signals(raw, strat)
+                if not df_sig.empty and "Signal" in df_sig.columns:
+                    last_sig = df_sig["Signal"].iloc[-1]
+                    if last_sig == 1: buy_votes += 1
+                    elif last_sig == -1: sell_votes += 1
+                    
+            min_v = get_min_votes(ticker)
+            if buy_votes >= min_v + 1: rec_call = "STRONG BUY"
+            elif buy_votes >= min_v: rec_call = "BUY"
+            elif sell_votes >= min_v: rec_call = "SELL"
+            else: rec_call = "HOLD"
+            
+            rec_results.append({
+                "Ticker": ticker,
+                "Label": ticker_label(ticker),
+                "Market": get_market(ticker),
+                "Price": round(float(raw["Close"].iloc[-1]), 2),
+                "Recommendation": rec_call,
+                "Buy Votes": buy_votes,
+                "Sell Votes": sell_votes,
+                "Required Threshold": min_v
+            })
+            
+        prog.empty(); status.empty()
+        st.session_state["rec_results"] = rec_results
+        st.session_state["rec_label"] = rec_market
+
+    if st.session_state["rec_results"]:
+        st.subheader(f"Recommendations for {st.session_state['rec_label']}")
+        rec_df = pd.DataFrame(st.session_state["rec_results"])
+        st.dataframe(rec_df, use_container_width=True)
+
+# ==================== TAB 3: ALPACA BOT ====================
+with tab3:
+    st.title("⚡ Alpaca Live / Paper Trading Bot")
     
-    if match_row:
-        st.plotly_chart(draw_chart(match_row["_df"], match_row["_log"], selected_strat), use_container_width=True)
-        st.subheader("Trade Log")
-        st.dataframe(pd.DataFrame(match_row["_log"]), use_container_width=True)
-else:
-    st.info("Choose a strategy and period in the sidebar, then click a Run button to calculate signals.")
+    if not ALPACA_AVAILABLE:
+        st.error("`alpaca-py` library is not installed in your Python environment. Install it via `pip install alpaca-py` to use automated execution.")
+    else:
+        st.markdown("Enter your Alpaca API credentials below to view live portfolio status and run automated execution.")
+        c1, c2, c3 = st.columns(3)
+        api_key = c1.text_input("Alpaca API Key", type="password")
+        secret_key = c2.text_input("Alpaca Secret Key", type="password")
+        paper_mode = c3.checkbox("Paper Trading", value=True)
+        
+        if api_key and secret_key:
+            try:
+                client = TradingClient(api_key, secret_key, paper=paper_mode)
+                account = client.get_account()
+                
+                st.success(f"Connected to Alpaca ({'Paper' if paper_mode else 'Live'}) | Cash: ${float(account.cash):,.2f} \vert{} Equity:${float(account.portfolio_value):,.2f}")
+                
+                # Fetch positions
+                positions = client.get_all_positions()
+                if positions:
+                    pos_data = []
+                    for p in positions:
+                        pos_data.append({
+                            "Symbol": p.symbol,
+                            "Qty": p.qty,
+                            "Entry Price": round(float(p.avg_entry_price), 2),
+                            "Current Price": round(float(p.current_price), 2),
+                            "Unrealized PnL": round(float(p.unrealized_pl), 2),
+                            "Market Value": round(float(p.market_value), 2)
+                        })
+                    st.subheader("Current Open Positions")
+                    st.dataframe(pd.DataFrame(pos_data), use_container_width=True)
+                else:
+                    st.info("No open positions on Alpaca.")
+            except Exception as e:
+                st.error(f"Alpaca Connection Failed: {str(e)}")
+
+# ==================== TAB 4: WATCHLIST & PERFORMANCE ====================
+with tab4:
+    st.title("📊 Watchlist & Strategy Comparison")
+    
+    col_w1, col_w2 = st.columns([3, 1])
+    with col_w1:
+        new_ticker = st.text_input("Add Ticker to Watchlist (e.g. TSLA, BTC-USD, RELIANCE.NS):").upper()
+    with col_w2:
+        if st.button("Add Ticker") and new_ticker:
+            if new_ticker not in st.session_state["watchlist"]:
+                st.session_state["watchlist"].append(new_ticker)
+                st.success(f"Added {new_ticker}")
+
+    if st.session_state["watchlist"]:
+        st.subheader("Your Custom Watchlist")
+        wl_data = []
+        for t in st.session_state["watchlist"]:
+            raw, _ = fetch_data_with_fallback(t, interval="1d", days=30)
+            if raw is not None and not raw.empty:
+                last_p = round(float(raw["Close"].iloc[-1]), 2)
+                chg = round(((last_p / float(raw["Close"].iloc[-2])) - 1) * 100, 2) if len(raw) > 1 else 0.0
+                wl_data.append({"Ticker": t, "Label": ticker_label(t), "Market": get_market(t), "Price": last_p, "24h Change %": chg})
+        
+        if wl_data:
+            st.dataframe(pd.DataFrame(wl_data), use_container_width=True)
+            if st.button("Clear Watchlist"):
+                st.session_state["watchlist"] = []
+                st.rerun()
+    else:
+        st.info("Watchlist is currently empty.")
